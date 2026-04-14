@@ -4,7 +4,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { motion } from 'framer-motion';
 import {
-  Settings,
   User,
   Building2,
   Key,
@@ -12,11 +11,8 @@ import {
   Shield,
   CreditCard,
   Save,
-  Eye,
-  EyeOff,
   Copy,
   Check,
-  RefreshCw,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -67,7 +63,7 @@ export function SettingsPage() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState('profile');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [showApiKey, setShowApiKey] = useState<string | null>(null);
+  const [_showApiKey, _setShowApiKey] = useState<string | null>(null);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isSaving, setIsSaving] = useState(false);

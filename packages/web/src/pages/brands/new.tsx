@@ -141,7 +141,7 @@ export function NewBrandPage() {
       if (response.success && response.data) {
         navigate(`/brands/${response.data.id}`);
       } else {
-        setSubmitError(response.error || 'Failed to create brand');
+        setSubmitError(response.error?.message || 'Failed to create brand');
       }
     } catch (error) {
       setSubmitError('An unexpected error occurred');

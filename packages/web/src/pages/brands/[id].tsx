@@ -10,7 +10,6 @@ import {
   AlertCircle,
   FileText,
   Mail,
-  Phone,
   MapPin,
   Globe,
   Calendar,

@@ -24,7 +24,7 @@ interface AdminAuthState {
 
 const ADMIN_API_URL = import.meta.env.VITE_API_URL || '/api';
 
-export const useAdminStore = create<AdminAuthState>((set, get) => ({
+export const useAdminStore = create<AdminAuthState>((set, _get) => ({
   admin: null,
   isAuthenticated: false,
   isLoading: true,

@@ -10,7 +10,6 @@ import {
   ArrowLeft,
   Check,
   AlertCircle,
-  Building2,
   MessageSquare,
   FileText,
 } from 'lucide-react';
@@ -144,7 +143,7 @@ export function NewCampaignPage() {
       if (response.success && response.data) {
         navigate(`/campaigns/${response.data.id}`);
       } else {
-        setSubmitError(response.error || 'Failed to create campaign');
+        setSubmitError(response.error?.message || 'Failed to create campaign');
       }
     } catch (error) {
       setSubmitError('An unexpected error occurred');
