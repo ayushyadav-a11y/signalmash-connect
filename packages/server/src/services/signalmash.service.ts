@@ -136,16 +136,15 @@ export class SignalmashService {
    * Get the current Signalmash API configuration
    * This is fetched fresh for each request to support runtime updates
    */
-  private async getConfig(): Promise<{ apiUrl: string; apiKey: string; accountSid: string }> {
+  private async getConfig(): Promise<{ apiUrl: string; apiKey: string }> {
     const [apiUrl, apiKey] = await Promise.all([
       this.getSetting(SETTINGS_KEYS.SIGNALMASH_API_URL, config.signalmashApiUrl),
-      this.getSetting(SETTINGS_KEYS.SIGNALMASH_API_KEY, config.signalmashApiKey),
+      this.getSetting(SETTINGS_KEYS.SIGNALMASH_API_KEY, config.signalmashApiKey || ''),
     ]);
 
     return {
       apiUrl,
       apiKey,
-      accountSid: config.signalmashAccountSid,
     };
   }
 
@@ -172,7 +171,6 @@ export class SignalmashService {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${signalmashConfig.apiKey}`,
-      'X-Account-Sid': signalmashConfig.accountSid,
     };
 
     try {

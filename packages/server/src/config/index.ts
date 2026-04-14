@@ -30,7 +30,6 @@ const configSchema = z.object({
   // Signalmash (uses API Token only - get from portal.signalmash.com/#/api/tokens)
   signalmashApiUrl: z.string().url().default('https://api.signalmash.com'),
   signalmashApiKey: z.string().optional(),
-  signalmashAccountSid: z.string().optional(),
 
   // GHL (get from GHL Marketplace developer portal)
   ghlAppClientId: z.string().optional(),
@@ -83,7 +82,6 @@ function loadConfig() {
 
     signalmashApiUrl: process.env['SIGNALMASH_API_URL'],
     signalmashApiKey: process.env['SIGNALMASH_API_KEY'],
-    signalmashAccountSid: process.env['SIGNALMASH_ACCOUNT_SID'],
 
     ghlAppClientId: process.env['GHL_APP_CLIENT_ID'],
     ghlAppClientSecret: process.env['GHL_APP_CLIENT_SECRET'],
