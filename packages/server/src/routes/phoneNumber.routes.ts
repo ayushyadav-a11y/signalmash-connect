@@ -30,7 +30,7 @@ router.get(
   '/available',
   validate({ query: searchQuerySchema }),
   asyncHandler(async (req: Request, res: Response) => {
-    const { areaCode, contains, state, limit } = req.query as z.infer<typeof searchQuerySchema>;
+    const { areaCode, contains, state, limit } = req.query as unknown as z.infer<typeof searchQuerySchema>;
 
     const numbers = await phoneNumberService.searchAvailableNumbers({
       areaCode,
@@ -77,7 +77,7 @@ router.get(
   '/',
   validate({ query: listQuerySchema }),
   asyncHandler(async (req: Request, res: Response) => {
-    const { status, campaignId, page, limit } = req.query as z.infer<typeof listQuerySchema>;
+    const { status, campaignId, page, limit } = req.query as unknown as z.infer<typeof listQuerySchema>;
 
     const result = await phoneNumberService.getOrganizationNumbers(
       req.user!.organizationId,
