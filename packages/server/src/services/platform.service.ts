@@ -71,7 +71,7 @@ export class PlatformService {
         tokenExpiresAt: data.tokenExpiresAt,
         scopes: data.scopes,
         status: 'connected',
-        metadata: data.metadata ?? {},
+        metadata: (data.metadata ?? {}) as any,
       },
     });
 

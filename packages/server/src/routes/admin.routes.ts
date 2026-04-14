@@ -183,7 +183,7 @@ router.put('/settings', requireSuperAdmin, async (req: AdminRequest, res: Respon
     });
 
     const { settings } = schema.parse(req.body);
-    const results = [];
+    const results: Awaited<ReturnType<typeof adminService.setSetting>>[] = [];
 
     for (const setting of settings) {
       const result = await adminService.setSetting(

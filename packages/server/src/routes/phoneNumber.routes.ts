@@ -3,11 +3,11 @@
 // ===========================================
 
 import { Router } from 'express';
-import type { Router as RouterType } from 'express';
+import type { Router as RouterType, Request, Response } from 'express';
 import { z } from 'zod';
 import { phoneNumberService } from '../services/phoneNumber.service.js';
 import { validate, paginationSchema, idParamSchema } from '../middleware/validation.js';
-import { authenticate, type AuthenticatedRequest } from '../middleware/auth.js';
+import { authenticate } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router: RouterType = Router();
@@ -29,7 +29,7 @@ const searchQuerySchema = z.object({
 router.get(
   '/available',
   validate({ query: searchQuerySchema }),
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { areaCode, contains, state, limit } = req.query as z.infer<typeof searchQuerySchema>;
 
     const numbers = await phoneNumberService.searchAvailableNumbers({
@@ -52,7 +52,7 @@ router.get(
 
 router.get(
   '/stats',
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const stats = await phoneNumberService.getStats(req.user!.organizationId);
 
     res.json({
@@ -76,7 +76,7 @@ const listQuerySchema = z.object({
 router.get(
   '/',
   validate({ query: listQuerySchema }),
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { status, campaignId, page, limit } = req.query as z.infer<typeof listQuerySchema>;
 
     const result = await phoneNumberService.getOrganizationNumbers(
@@ -98,7 +98,7 @@ router.get(
 router.get(
   '/:id',
   validate({ params: idParamSchema }),
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const number = await phoneNumberService.getNumber(
       req.user!.organizationId,
       req.params.id
@@ -124,7 +124,7 @@ const purchaseBodySchema = z.object({
 router.post(
   '/purchase',
   validate({ body: purchaseBodySchema }),
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { phoneNumber, campaignId, friendlyName } = req.body as z.infer<typeof purchaseBodySchema>;
 
     const number = await phoneNumberService.purchaseNumber(
@@ -152,7 +152,7 @@ const updateBodySchema = z.object({
 router.patch(
   '/:id',
   validate({ params: idParamSchema, body: updateBodySchema }),
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const number = await phoneNumberService.updateNumber(
       req.user!.organizationId,
       req.params.id,
@@ -173,7 +173,7 @@ router.patch(
 router.delete(
   '/:id',
   validate({ params: idParamSchema }),
-  asyncHandler(async (req: AuthenticatedRequest, res) => {
+  asyncHandler(async (req: Request, res: Response) => {
     await phoneNumberService.releaseNumber(
       req.user!.organizationId,
       req.params.id

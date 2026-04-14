@@ -442,7 +442,7 @@ export class AdminService {
         action,
         resource,
         resourceId,
-        details: details || undefined,
+        details: (details || undefined) as any,
         ipAddress: context?.ipAddress,
         userAgent: context?.userAgent,
       },
