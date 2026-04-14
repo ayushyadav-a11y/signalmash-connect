@@ -1,0 +1,151 @@
+# =============================================
+# SignalMash Connect - Docker Compose (Production)
+# =============================================
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: signalmash-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-signalmash}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-signalmash}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: signalmash-redis
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # API Server
+  server:
+    image: ${DOCKER_REGISTRY:-ghcr.io}/signalmash-connect/server:${VERSION:-latest}
+    container_name: signalmash-server
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-signalmash}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      SIGNALMASH_API_KEY: ${SIGNALMASH_API_KEY}
+      SIGNALMASH_API_URL: ${SIGNALMASH_API_URL:-https://api.signalmash.com}
+      GHL_APP_CLIENT_ID: ${GHL_APP_CLIENT_ID}
+      GHL_APP_CLIENT_SECRET: ${GHL_APP_CLIENT_SECRET}
+      GHL_APP_REDIRECT_URI: ${GHL_APP_REDIRECT_URI}
+      APP_URL: ${APP_URL}
+      LOG_LEVEL: info
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - internal
+      - web
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Web Frontend
+  web:
+    image: ${DOCKER_REGISTRY:-ghcr.io}/signalmash-connect/web:${VERSION:-latest}
+    container_name: signalmash-web
+    restart: always
+    depends_on:
+      - server
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - internal
+      - web
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.signalmash.rule=Host(`${APP_DOMAIN}`)"
+      - "traefik.http.routers.signalmash.entrypoints=websecure"
+      - "traefik.http.routers.signalmash.tls.certresolver=letsencrypt"
+      - "traefik.http.services.signalmash.loadbalancer.server.port=80"
+
+  # Traefik Reverse Proxy (optional - remove if using external proxy)
+  traefik:
+    image: traefik:v2.10
+    container_name: signalmash-traefik
+    restart: always
+    command:
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt_data:/letsencrypt
+    networks:
+      - web
+
+volumes:
+  postgres_data:
+  redis_data:
+  letsencrypt_data:
+
+networks:
+  internal:
+    driver: bridge
+  web:
+    driver: bridge

@@ -1,0 +1,327 @@
+// ===========================================
+// Admin Routes
+// ===========================================
+
+import { Router, Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+import { adminService, SETTINGS_KEYS } from '../services/admin.service.js';
+import { AppError } from '../utils/errors.js';
+import { verifyAdminAccessToken } from '../utils/jwt.js';
+
+const router = Router();
+
+// ===========================================
+// Admin Auth Middleware
+// ===========================================
+
+interface AdminRequest extends Request {
+  admin?: {
+    id: string;
+    email: string;
+    role: string;
+  };
+}
+
+const requireSuperAdmin = async (
+  req: AdminRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      throw new AppError('No token provided', 'UNAUTHORIZED', 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyAdminAccessToken(token);
+
+    req.admin = {
+      id: payload.adminId,
+      email: payload.email,
+      role: 'superadmin',
+    };
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ===========================================
+// Auth Routes
+// ===========================================
+
+// Login
+router.post('/auth/login', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const schema = z.object({
+      email: z.string().email(),
+      password: z.string().min(1),
+    });
+
+    const data = schema.parse(req.body);
+    const result = await adminService.loginSuperAdmin(data.email, data.password);
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Refresh token
+router.post('/auth/refresh', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const schema = z.object({
+      refreshToken: z.string(),
+    });
+
+    const { refreshToken } = schema.parse(req.body);
+    const tokens = await adminService.refreshAdminToken(refreshToken);
+
+    res.json({
+      success: true,
+      data: tokens,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Logout
+router.post('/auth/logout', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const schema = z.object({
+      refreshToken: z.string(),
+    });
+
+    const { refreshToken } = schema.parse(req.body);
+    await adminService.logoutAdmin(refreshToken);
+
+    res.json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// Protected Admin Routes
+// ===========================================
+
+// Get current admin
+router.get('/me', requireSuperAdmin, async (req: AdminRequest, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      admin: req.admin,
+    },
+  });
+});
+
+// ===========================================
+// Settings Routes
+// ===========================================
+
+// Get all settings
+router.get('/settings', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const settings = await adminService.getAllSettings(req.admin!.id);
+
+    res.json({
+      success: true,
+      data: settings,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update a setting
+router.put('/settings/:key', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const schema = z.object({
+      value: z.string(),
+      description: z.string().optional(),
+    });
+
+    const { key } = req.params;
+    const data = schema.parse(req.body);
+
+    const setting = await adminService.setSetting(
+      req.admin!.id,
+      key,
+      data.value,
+      { description: data.description }
+    );
+
+    res.json({
+      success: true,
+      data: setting,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Batch update settings
+router.put('/settings', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const schema = z.object({
+      settings: z.array(z.object({
+        key: z.string(),
+        value: z.string(),
+        description: z.string().optional(),
+      })),
+    });
+
+    const { settings } = schema.parse(req.body);
+    const results = [];
+
+    for (const setting of settings) {
+      const result = await adminService.setSetting(
+        req.admin!.id,
+        setting.key,
+        setting.value,
+        { description: setting.description }
+      );
+      results.push(result);
+    }
+
+    res.json({
+      success: true,
+      data: results,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete a setting
+router.delete('/settings/:key', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const { key } = req.params;
+    await adminService.deleteSetting(req.admin!.id, key);
+
+    res.json({
+      success: true,
+      message: 'Setting deleted',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// Dashboard Routes
+// ===========================================
+
+// Get dashboard stats
+router.get('/dashboard', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const stats = await adminService.getDashboardStats(req.admin!.id);
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get organizations
+router.get('/organizations', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+
+    const result = await adminService.getOrganizations(req.admin!.id, { page, limit });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get audit logs
+router.get('/audit-logs', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+
+    const result = await adminService.getAuditLogs(req.admin!.id, { page, limit });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// Setup Route (Create first admin - only works once)
+// ===========================================
+
+router.post('/setup', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    // Check if any admin exists
+    const existingAdmin = await adminService.getDashboardStats('setup').catch(() => null);
+    const adminCount = await (await import('../config/database')).prisma.superAdmin.count();
+
+    if (adminCount > 0) {
+      throw new AppError('Setup already completed', 'SETUP_COMPLETE', 400);
+    }
+
+    const schema = z.object({
+      email: z.string().email(),
+      password: z.string().min(8),
+      name: z.string().min(1),
+      signalmashApiKey: z.string().optional(),
+      signalmashApiUrl: z.string().url().optional(),
+    });
+
+    const data = schema.parse(req.body);
+
+    // Create admin
+    const admin = await adminService.createSuperAdmin({
+      email: data.email,
+      password: data.password,
+      name: data.name,
+    });
+
+    // Initialize default settings
+    await adminService.initializeDefaultSettings();
+
+    // Set Signalmash settings if provided
+    if (data.signalmashApiKey) {
+      await adminService.setSetting(admin.id, SETTINGS_KEYS.SIGNALMASH_API_KEY, data.signalmashApiKey);
+    }
+    if (data.signalmashApiUrl) {
+      await adminService.setSetting(admin.id, SETTINGS_KEYS.SIGNALMASH_API_URL, data.signalmashApiUrl);
+    }
+
+    // Auto-login
+    const result = await adminService.loginSuperAdmin(data.email, data.password);
+
+    res.json({
+      success: true,
+      data: result,
+      message: 'Admin setup completed successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+export default router;

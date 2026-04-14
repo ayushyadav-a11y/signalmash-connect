@@ -1,0 +1,34 @@
+{
+  "name": "signalmash-connect",
+  "version": "1.0.0",
+  "description": "Multi-platform SMS integration platform with Signalmash - GHL, Shopify, HubSpot, Salesforce, Zoho",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "npm run dev -w @signalmash-connect/server",
+    "dev:web": "npm run dev -w @signalmash-connect/web",
+    "build": "npm run build -w @signalmash-connect/shared && npm run build -w @signalmash-connect/server && npm run build -w @signalmash-connect/web",
+    "build:server": "npm run build -w @signalmash-connect/server",
+    "build:web": "npm run build -w @signalmash-connect/web",
+    "db:generate": "npm run db:generate -w @signalmash-connect/server",
+    "db:migrate": "npm run db:migrate -w @signalmash-connect/server",
+    "db:studio": "npm run db:studio -w @signalmash-connect/server",
+    "db:seed": "npm run db:seed -w @signalmash-connect/server",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "test": "jest",
+    "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

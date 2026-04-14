@@ -1,0 +1,515 @@
+// ===========================================
+// Signalmash Connect - Database Schema
+// ===========================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================
+// Organization & Users
+// ===========================================
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  phone     String?
+  website   String?
+  logoUrl   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users               User[]
+  brands              Brand[]
+  campaigns           Campaign[]
+  platformConnections PlatformConnection[]
+  phoneNumbers        PhoneNumber[]
+  messages            Message[]
+  webhookEvents       WebhookEvent[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String    @map("password_hash")
+  firstName      String    @map("first_name")
+  lastName       String    @map("last_name")
+  avatarUrl      String?   @map("avatar_url")
+  role           UserRole  @default(member)
+  emailVerified  Boolean   @default(false) @map("email_verified")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  refreshTokens RefreshToken[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+enum UserRole {
+  owner
+  admin
+  member
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// ===========================================
+// Brand Registration (10DLC)
+// ===========================================
+
+model Brand {
+  id            String           @id @default(uuid())
+  legalName     String           @map("legal_name")
+  displayName   String           @map("display_name")
+  ein           String?
+  entityType    EntityType       @map("entity_type")
+  vertical      BusinessVertical
+  streetAddress String           @map("street_address")
+  city          String
+  state         String
+  postalCode    String           @map("postal_code")
+  country       String           @default("US")
+  website       String
+  phone         String
+  email         String
+
+  // Signalmash/TCR specific
+  signalmashBrandId String?      @unique @map("signalmash_brand_id")
+  tcrBrandId        String?      @unique @map("tcr_brand_id")
+  status            BrandStatus  @default(draft)
+  verificationScore Int?         @map("verification_score")
+  rejectionReason   String?      @map("rejection_reason")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  campaigns Campaign[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("brands")
+}
+
+enum EntityType {
+  sole_proprietor
+  partnership
+  corporation
+  llc
+  non_profit
+  government
+}
+
+enum BusinessVertical {
+  retail
+  healthcare
+  financial
+  education
+  hospitality
+  real_estate
+  technology
+  professional_services
+  other
+}
+
+enum BrandStatus {
+  draft
+  pending_verification
+  verified
+  unverified
+  rejected
+  suspended
+}
+
+// ===========================================
+// Campaign Registration
+// ===========================================
+
+model Campaign {
+  id          String          @id @default(uuid())
+  name        String
+  description String
+  useCase     CampaignUseCase @map("use_case")
+
+  // Sample messages stored as JSON array
+  sampleMessages Json @default("[]") @map("sample_messages")
+
+  // Opt-in/out configuration
+  optInKeywords  Json   @default("[\"START\", \"YES\", \"SUBSCRIBE\"]") @map("opt_in_keywords")
+  optOutKeywords Json   @default("[\"STOP\", \"UNSUBSCRIBE\", \"CANCEL\"]") @map("opt_out_keywords")
+  helpKeywords   Json   @default("[\"HELP\", \"INFO\"]") @map("help_keywords")
+  optInMessage   String @default("You have been subscribed to receive messages. Reply STOP to unsubscribe.") @map("opt_in_message")
+  optOutMessage  String @default("You have been unsubscribed and will no longer receive messages from us.") @map("opt_out_message")
+  helpMessage    String @default("For assistance, please contact us at support@example.com") @map("help_message")
+
+  // Signalmash/TCR specific
+  signalmashCampaignId String?        @unique @map("signalmash_campaign_id")
+  tcrCampaignId        String?        @unique @map("tcr_campaign_id")
+  status               CampaignStatus @default(draft)
+  rejectionReason      String?        @map("rejection_reason")
+
+  // Throughput limits
+  dailyMessageLimit  Int? @map("daily_message_limit")
+  messagesPerSecond  Int? @map("messages_per_second")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  brandId String @map("brand_id")
+  brand   Brand  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  phoneNumbers PhoneNumber[]
+  messages     Message[]
+
+  @@index([organizationId])
+  @@index([brandId])
+  @@index([status])
+  @@map("campaigns")
+}
+
+enum CampaignUseCase {
+  two_factor_auth       @map("2fa")
+  account_notifications
+  customer_care
+  delivery_notifications
+  fraud_alerts
+  higher_education
+  low_volume
+  marketing
+  mixed
+  polling_voting
+  public_service_announcement
+  security_alerts
+}
+
+enum CampaignStatus {
+  draft
+  pending_approval
+  approved
+  rejected
+  suspended
+  expired
+}
+
+// ===========================================
+// Platform Connections
+// ===========================================
+
+model PlatformConnection {
+  id                  String         @id @default(uuid())
+  platform            Platform
+  platformAccountId   String         @map("platform_account_id")
+  platformAccountName String?        @map("platform_account_name")
+
+  // OAuth tokens (encrypted)
+  accessToken       String    @map("access_token")
+  refreshToken      String?   @map("refresh_token")
+  tokenExpiresAt    DateTime? @map("token_expires_at")
+  scopes            Json      @default("[]")
+
+  // Webhook configuration
+  webhookUrl        String?   @map("webhook_url")
+  webhookSecret     String?   @map("webhook_secret")
+
+  // Status & metadata
+  status            PlatformStatus @default(pending)
+  metadata          Json?
+  lastSyncAt        DateTime?      @map("last_sync_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  messages Message[]
+
+  @@unique([organizationId, platform, platformAccountId])
+  @@index([organizationId])
+  @@index([platform])
+  @@map("platform_connections")
+}
+
+enum Platform {
+  ghl
+  shopify
+  hubspot
+  salesforce
+  zoho
+}
+
+enum PlatformStatus {
+  connected
+  disconnected
+  error
+  pending
+}
+
+// ===========================================
+// Phone Numbers
+// ===========================================
+
+model PhoneNumber {
+  id              String            @id @default(uuid())
+  phoneNumber     String            @unique @map("phone_number")
+  formattedNumber String            @map("formatted_number")
+  friendlyName    String?           @map("friendly_name")
+  areaCode        String?           @map("area_code")
+
+  // Capabilities
+  smsCapable      Boolean @default(true) @map("sms_capable")
+  mmsCapable      Boolean @default(false) @map("mms_capable")
+  voiceCapable    Boolean @default(false) @map("voice_capable")
+
+  // Pricing
+  monthlyPrice    Decimal? @map("monthly_price") @db.Decimal(10, 2)
+  setupPrice      Decimal? @map("setup_price") @db.Decimal(10, 2)
+
+  // Signalmash specific
+  signalmashNumberId String? @unique @map("signalmash_number_id")
+  status             PhoneNumberStatus @default(pending)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  campaignId String?   @map("campaign_id")
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  messages Message[]
+
+  @@index([organizationId])
+  @@index([campaignId])
+  @@map("phone_numbers")
+}
+
+enum PhoneNumberStatus {
+  active
+  pending
+  suspended
+  released
+}
+
+// ===========================================
+// Messages
+// ===========================================
+
+model Message {
+  id        String           @id @default(uuid())
+  direction MessageDirection
+  type      MessageType      @default(sms)
+  from      String
+  to        String
+  body      String
+  mediaUrls Json?            @map("media_urls")
+
+  // Status tracking
+  status       MessageStatus @default(queued)
+  errorCode    String?       @map("error_code")
+  errorMessage String?       @map("error_message")
+
+  // External IDs
+  signalmashMessageId    String? @unique @map("signalmash_message_id")
+  platformMessageId      String? @map("platform_message_id")
+  platformConversationId String? @map("platform_conversation_id")
+
+  // Timestamps
+  sentAt      DateTime? @map("sent_at")
+  deliveredAt DateTime? @map("delivered_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  platformConnectionId String?             @map("platform_connection_id")
+  platformConnection   PlatformConnection? @relation(fields: [platformConnectionId], references: [id], onDelete: SetNull)
+
+  campaignId String?   @map("campaign_id")
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  phoneNumberId String?      @map("phone_number_id")
+  phoneNumber   PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([platformConnectionId])
+  @@index([campaignId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+enum MessageDirection {
+  inbound
+  outbound
+}
+
+enum MessageType {
+  sms
+  mms
+}
+
+enum MessageStatus {
+  queued
+  sending
+  sent
+  delivered
+  failed
+  undelivered
+  received
+}
+
+// ===========================================
+// Webhook Events (for debugging/auditing)
+// ===========================================
+
+model WebhookEvent {
+  id          String    @id @default(uuid())
+  platform    Platform
+  eventType   String    @map("event_type")
+  payload     Json
+  headers     Json?
+  processed   Boolean   @default(false)
+  processedAt DateTime? @map("processed_at")
+  error       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  organizationId String?       @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([platform])
+  @@index([eventType])
+  @@index([processed])
+  @@index([createdAt])
+  @@map("webhook_events")
+}
+
+// ===========================================
+// OAuth State (for CSRF protection)
+// ===========================================
+
+model OAuthState {
+  id             String   @id @default(uuid())
+  state          String   @unique
+  platform       Platform
+  organizationId String?  @map("organization_id")
+  redirectUri    String   @map("redirect_uri")
+  codeVerifier   String?  @map("code_verifier") // For PKCE
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([state])
+  @@index([expiresAt])
+  @@map("oauth_states")
+}
+
+// ===========================================
+// App Settings (Admin-configurable settings)
+// ===========================================
+
+model AppSettings {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String // Encrypted for sensitive values
+
+  // Metadata
+  description String?
+  isEncrypted Boolean @default(false) @map("is_encrypted")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by") // Admin user ID who last updated
+
+  @@map("app_settings")
+}
+
+// ===========================================
+// Super Admins (App-level administrators)
+// ===========================================
+
+model SuperAdmin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  isActive     Boolean  @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  refreshTokens SuperAdminRefreshToken[]
+  auditLogs     AdminAuditLog[]
+
+  @@map("super_admins")
+}
+
+model SuperAdminRefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  adminId String     @map("admin_id")
+  admin   SuperAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([token])
+  @@map("super_admin_refresh_tokens")
+}
+
+// ===========================================
+// Admin Audit Log (Track admin actions)
+// ===========================================
+
+model AdminAuditLog {
+  id        String   @id @default(uuid())
+  action    String   // e.g., "UPDATE_SETTING", "VIEW_USERS"
+  resource  String   // e.g., "app_settings", "organizations"
+  resourceId String? @map("resource_id")
+  details   Json?    // Additional context
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  adminId String     @map("admin_id")
+  admin   SuperAdmin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("admin_audit_logs")
+}

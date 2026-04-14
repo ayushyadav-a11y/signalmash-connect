@@ -1,0 +1,128 @@
+// ===========================================
+// Server Configuration
+// ===========================================
+
+import { z } from 'zod';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+const configSchema = z.object({
+  // Server
+  nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
+  port: z.coerce.number().default(3001),
+  apiUrl: z.string().url().default('http://localhost:3001'),
+  webUrl: z.string().url().default('http://localhost:5173'),
+
+  // Database
+  databaseUrl: z.string(),
+
+  // Redis
+  redisUrl: z.string().default('redis://localhost:6379'),
+
+  // JWT & Security
+  jwtSecret: z.string().min(32),
+  jwtRefreshSecret: z.string().min(32),
+  sessionSecret: z.string().min(32),
+  encryptionKey: z.string().length(32),
+
+  // Signalmash
+  signalmashApiUrl: z.string().url().default('https://api.signalmash.com'),
+  signalmashApiKey: z.string(),
+  signalmashAccountSid: z.string(),
+
+  // GHL
+  ghlAppClientId: z.string(),
+  ghlAppClientSecret: z.string(),
+  ghlAppSsoKey: z.string(),
+  ghlApiDomain: z.string().url().default('https://services.leadconnectorhq.com'),
+  ghlWebhookSecret: z.string().optional(),
+
+  // Shopify (Future)
+  shopifyApiKey: z.string().optional(),
+  shopifyApiSecret: z.string().optional(),
+
+  // HubSpot (Future)
+  hubspotClientId: z.string().optional(),
+  hubspotClientSecret: z.string().optional(),
+
+  // Salesforce (Future)
+  salesforceClientId: z.string().optional(),
+  salesforceClientSecret: z.string().optional(),
+
+  // Zoho (Future)
+  zohoClientId: z.string().optional(),
+  zohoClientSecret: z.string().optional(),
+
+  // Email
+  smtpHost: z.string().optional(),
+  smtpPort: z.coerce.number().optional(),
+  smtpUser: z.string().optional(),
+  smtpPass: z.string().optional(),
+  fromEmail: z.string().email().optional(),
+
+  // Sentry
+  sentryDsn: z.string().optional(),
+});
+
+function loadConfig() {
+  const rawConfig = {
+    nodeEnv: process.env['NODE_ENV'],
+    port: process.env['PORT'],
+    apiUrl: process.env['API_URL'],
+    webUrl: process.env['WEB_URL'],
+
+    databaseUrl: process.env['DATABASE_URL'],
+    redisUrl: process.env['REDIS_URL'],
+
+    jwtSecret: process.env['JWT_SECRET'],
+    jwtRefreshSecret: process.env['JWT_REFRESH_SECRET'],
+    sessionSecret: process.env['SESSION_SECRET'],
+    encryptionKey: process.env['ENCRYPTION_KEY'],
+
+    signalmashApiUrl: process.env['SIGNALMASH_API_URL'],
+    signalmashApiKey: process.env['SIGNALMASH_API_KEY'],
+    signalmashAccountSid: process.env['SIGNALMASH_ACCOUNT_SID'],
+
+    ghlAppClientId: process.env['GHL_APP_CLIENT_ID'],
+    ghlAppClientSecret: process.env['GHL_APP_CLIENT_SECRET'],
+    ghlAppSsoKey: process.env['GHL_APP_SSO_KEY'],
+    ghlApiDomain: process.env['GHL_API_DOMAIN'],
+    ghlWebhookSecret: process.env['GHL_WEBHOOK_SECRET'],
+
+    shopifyApiKey: process.env['SHOPIFY_API_KEY'],
+    shopifyApiSecret: process.env['SHOPIFY_API_SECRET'],
+
+    hubspotClientId: process.env['HUBSPOT_CLIENT_ID'],
+    hubspotClientSecret: process.env['HUBSPOT_CLIENT_SECRET'],
+
+    salesforceClientId: process.env['SALESFORCE_CLIENT_ID'],
+    salesforceClientSecret: process.env['SALESFORCE_CLIENT_SECRET'],
+
+    zohoClientId: process.env['ZOHO_CLIENT_ID'],
+    zohoClientSecret: process.env['ZOHO_CLIENT_SECRET'],
+
+    smtpHost: process.env['SMTP_HOST'],
+    smtpPort: process.env['SMTP_PORT'],
+    smtpUser: process.env['SMTP_USER'],
+    smtpPass: process.env['SMTP_PASS'],
+    fromEmail: process.env['FROM_EMAIL'],
+
+    sentryDsn: process.env['SENTRY_DSN'],
+  };
+
+  const result = configSchema.safeParse(rawConfig);
+
+  if (!result.success) {
+    console.error('❌ Invalid configuration:');
+    console.error(result.error.format());
+    process.exit(1);
+  }
+
+  return result.data;
+}
+
+export const config = loadConfig();
+
+export type Config = z.infer<typeof configSchema>;

@@ -1,0 +1,182 @@
+// ===========================================
+// Campaign Routes
+// ===========================================
+
+import { Router } from 'express';
+import { z } from 'zod';
+import { campaignService } from '../services/campaign.service.js';
+import { validate, idParamSchema } from '../middleware/validation.js';
+import { authenticate } from '../middleware/auth.js';
+import { asyncHandler } from '../middleware/errorHandler.js';
+
+const router = Router();
+
+// Validation schemas
+const createCampaignSchema = z.object({
+  brandId: z.string().uuid('Invalid brand ID'),
+  name: z.string().min(1, 'Name is required').max(100),
+  description: z.string().min(10, 'Description must be at least 10 characters').max(1000),
+  useCase: z.enum([
+    'two_factor_auth',
+    'account_notifications',
+    'customer_care',
+    'delivery_notifications',
+    'fraud_alerts',
+    'higher_education',
+    'low_volume',
+    'marketing',
+    'mixed',
+    'polling_voting',
+    'public_service_announcement',
+    'security_alerts',
+  ]),
+  sampleMessages: z
+    .array(z.string().min(10).max(320))
+    .min(1, 'At least one sample message is required')
+    .max(5, 'Maximum 5 sample messages'),
+  optInKeywords: z.array(z.string()).optional(),
+  optOutKeywords: z.array(z.string()).optional(),
+  helpKeywords: z.array(z.string()).optional(),
+  optInMessage: z.string().max(320).optional(),
+  optOutMessage: z.string().max(320).optional(),
+  helpMessage: z.string().max(320).optional(),
+});
+
+const updateCampaignSchema = createCampaignSchema.omit({ brandId: true }).partial();
+
+const listCampaignsQuerySchema = z.object({
+  brandId: z.string().uuid().optional(),
+  status: z
+    .enum(['draft', 'pending_approval', 'approved', 'rejected', 'suspended', 'expired'])
+    .optional(),
+});
+
+/**
+ * GET /campaigns
+ * List all campaigns for the organization
+ */
+router.get(
+  '/',
+  authenticate,
+  validate({ query: listCampaignsQuerySchema }),
+  asyncHandler(async (req, res) => {
+    const campaigns = await campaignService.getByOrganization(
+      req.user!.organizationId,
+      {
+        brandId: req.query.brandId as string | undefined,
+        status: req.query.status as any,
+      }
+    );
+
+    res.json({
+      success: true,
+      data: campaigns,
+    });
+  })
+);
+
+/**
+ * POST /campaigns
+ * Create a new campaign
+ */
+router.post(
+  '/',
+  authenticate,
+  validate({ body: createCampaignSchema }),
+  asyncHandler(async (req, res) => {
+    const campaign = await campaignService.create({
+      ...req.body,
+      organizationId: req.user!.organizationId,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: campaign,
+    });
+  })
+);
+
+/**
+ * GET /campaigns/:id
+ * Get campaign details
+ */
+router.get(
+  '/:id',
+  authenticate,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const campaign = await campaignService.getWithPhoneNumbers(
+      req.params.id,
+      req.user!.organizationId
+    );
+
+    res.json({
+      success: true,
+      data: campaign,
+    });
+  })
+);
+
+/**
+ * PUT /campaigns/:id
+ * Update campaign
+ */
+router.put(
+  '/:id',
+  authenticate,
+  validate({ params: idParamSchema, body: updateCampaignSchema }),
+  asyncHandler(async (req, res) => {
+    const campaign = await campaignService.update(
+      req.params.id,
+      req.user!.organizationId,
+      req.body
+    );
+
+    res.json({
+      success: true,
+      data: campaign,
+    });
+  })
+);
+
+/**
+ * POST /campaigns/:id/submit
+ * Submit campaign for approval
+ */
+router.post(
+  '/:id/submit',
+  authenticate,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const campaign = await campaignService.submitForApproval(
+      req.params.id,
+      req.user!.organizationId
+    );
+
+    res.json({
+      success: true,
+      data: campaign,
+      message: 'Campaign submitted for approval',
+    });
+  })
+);
+
+/**
+ * DELETE /campaigns/:id
+ * Delete draft campaign
+ */
+router.delete(
+  '/:id',
+  authenticate,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    await campaignService.delete(req.params.id, req.user!.organizationId);
+
+    res.json({
+      success: true,
+      message: 'Campaign deleted successfully',
+    });
+  })
+);
+
+export { router as campaignRoutes };
