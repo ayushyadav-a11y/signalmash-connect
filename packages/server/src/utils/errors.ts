@@ -10,8 +10,8 @@ export class AppError extends Error {
 
   constructor(
     message: string,
-    statusCode = 500,
-    code = 'INTERNAL_ERROR',
+    code: string = 'INTERNAL_ERROR',
+    statusCode: number = 500,
     isOperational = true,
     details?: Record<string, unknown>
   ) {
@@ -27,49 +27,49 @@ export class AppError extends Error {
 
 export class BadRequestError extends AppError {
   constructor(message = 'Bad Request', details?: Record<string, unknown>) {
-    super(message, 400, 'BAD_REQUEST', true, details);
+    super(message, 'BAD_REQUEST', 400, true, details);
   }
 }
 
 export class UnauthorizedError extends AppError {
   constructor(message = 'Unauthorized') {
-    super(message, 401, 'UNAUTHORIZED', true);
+    super(message, 'UNAUTHORIZED', 401, true);
   }
 }
 
 export class ForbiddenError extends AppError {
   constructor(message = 'Forbidden') {
-    super(message, 403, 'FORBIDDEN', true);
+    super(message, 'FORBIDDEN', 403, true);
   }
 }
 
 export class NotFoundError extends AppError {
   constructor(message = 'Resource not found') {
-    super(message, 404, 'NOT_FOUND', true);
+    super(message, 'NOT_FOUND', 404, true);
   }
 }
 
 export class ConflictError extends AppError {
   constructor(message = 'Resource already exists') {
-    super(message, 409, 'CONFLICT', true);
+    super(message, 'CONFLICT', 409, true);
   }
 }
 
 export class ValidationError extends AppError {
   constructor(message = 'Validation failed', details?: Record<string, unknown>) {
-    super(message, 422, 'VALIDATION_ERROR', true, details);
+    super(message, 'VALIDATION_ERROR', 422, true, details);
   }
 }
 
 export class RateLimitError extends AppError {
   constructor(message = 'Too many requests') {
-    super(message, 429, 'RATE_LIMIT_EXCEEDED', true);
+    super(message, 'RATE_LIMIT_EXCEEDED', 429, true);
   }
 }
 
 export class ExternalServiceError extends AppError {
   constructor(service: string, message: string) {
-    super(`${service}: ${message}`, 502, 'EXTERNAL_SERVICE_ERROR', true);
+    super(`${service}: ${message}`, 'EXTERNAL_SERVICE_ERROR', 502, true);
   }
 }
 

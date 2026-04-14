@@ -185,7 +185,7 @@ export class SignalmashService {
           });
 
           if (!res.ok) {
-            const errorBody = await res.json().catch(() => ({}));
+            const errorBody = await res.json().catch(() => ({})) as { message?: string };
             throw new ExternalServiceError(
               'Signalmash',
               `${res.status}: ${errorBody.message || res.statusText}`

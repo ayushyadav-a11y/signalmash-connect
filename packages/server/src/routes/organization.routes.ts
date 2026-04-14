@@ -3,13 +3,14 @@
 // ===========================================
 
 import { Router } from 'express';
+import type { Router as RouterType } from 'express';
 import { z } from 'zod';
 import { organizationService } from '../services/organization.service.js';
 import { validate, emailSchema } from '../middleware/validation.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // Validation schemas
 const updateOrganizationSchema = z.object({

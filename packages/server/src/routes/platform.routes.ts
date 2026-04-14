@@ -3,6 +3,7 @@
 // ===========================================
 
 import { Router } from 'express';
+import type { Router as RouterType } from 'express';
 import { z } from 'zod';
 import { prisma } from '../config/database.js';
 import { platformService } from '../services/platform.service.js';
@@ -16,7 +17,7 @@ import { generateUrlSafeToken } from '../utils/crypto.js';
 import { config } from '../config/index.js';
 import { logger } from '../utils/logger.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // Validation schemas
 const oauthCallbackSchema = z.object({

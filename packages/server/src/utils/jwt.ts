@@ -14,6 +14,7 @@ interface TokenPayload {
   organizationId: string;
   email: string;
   role: string;
+  [key: string]: unknown;
 }
 
 interface DecodedToken extends TokenPayload {

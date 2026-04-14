@@ -3,6 +3,7 @@
 // ===========================================
 
 import { Router } from 'express';
+import type { Router as RouterType } from 'express';
 import { authRoutes } from './auth.routes.js';
 import { organizationRoutes } from './organization.routes.js';
 import { brandRoutes } from './brand.routes.js';
@@ -13,7 +14,7 @@ import { platformRoutes } from './platform.routes.js';
 import { webhookRoutes } from './webhook.routes.js';
 import adminRoutes from './admin.routes.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // Health check
 router.get('/health', (req, res) => {

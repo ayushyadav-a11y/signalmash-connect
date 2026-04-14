@@ -3,13 +3,14 @@
 // ===========================================
 
 import { Router } from 'express';
+import type { Router as RouterType } from 'express';
 import { z } from 'zod';
 import { messageService } from '../services/message.service.js';
 import { validate, idParamSchema, phoneSchema, paginationSchema } from '../middleware/validation.js';
 import { authenticate } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // Validation schemas
 const sendMessageSchema = z.object({

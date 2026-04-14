@@ -8,18 +8,26 @@ import { UnauthorizedError, ForbiddenError } from '../utils/errors.js';
 import { prisma } from '../config/database.js';
 import type { UserRole } from '@prisma/client';
 
+// User info attached to authenticated requests
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: UserRole;
+  organizationId: string;
+}
+
+// Authenticated request type
+export interface AuthenticatedRequest extends Request {
+  user: AuthenticatedUser;
+}
+
 // Extend Express Request type
 declare global {
   namespace Express {
     interface Request {
-      user?: {
-        id: string;
-        email: string;
-        firstName: string;
-        lastName: string;
-        role: UserRole;
-        organizationId: string;
-      };
+      user?: AuthenticatedUser;
     }
   }
 }

@@ -3,12 +3,14 @@
 // ===========================================
 
 import { Router, Request, Response, NextFunction } from 'express';
+import type { Router as RouterType } from 'express';
 import { z } from 'zod';
 import { adminService, SETTINGS_KEYS } from '../services/admin.service.js';
 import { AppError } from '../utils/errors.js';
 import { verifyAdminAccessToken } from '../utils/jwt.js';
+import { prisma } from '../config/database.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // ===========================================
 // Admin Auth Middleware
@@ -277,7 +279,7 @@ router.post('/setup', async (req: Request, res: Response, next: NextFunction) =>
   try {
     // Check if any admin exists
     const existingAdmin = await adminService.getDashboardStats('setup').catch(() => null);
-    const adminCount = await (await import('../config/database')).prisma.superAdmin.count();
+    const adminCount = await prisma.superAdmin.count();
 
     if (adminCount > 0) {
       throw new AppError('Setup already completed', 'SETUP_COMPLETE', 400);

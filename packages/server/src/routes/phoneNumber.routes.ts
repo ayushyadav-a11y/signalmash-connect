@@ -3,13 +3,14 @@
 // ===========================================
 
 import { Router } from 'express';
+import type { Router as RouterType } from 'express';
 import { z } from 'zod';
 import { phoneNumberService } from '../services/phoneNumber.service.js';
 import { validate, paginationSchema, idParamSchema } from '../middleware/validation.js';
 import { authenticate, type AuthenticatedRequest } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 
-const router = Router();
+const router: RouterType = Router();
 
 // All routes require authentication
 router.use(authenticate);

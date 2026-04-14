@@ -3,6 +3,7 @@
 // ===========================================
 
 import { Router } from 'express';
+import type { Router as RouterType, Request, Response } from 'express';
 import { prisma } from '../config/database.js';
 import { messageService } from '../services/message.service.js';
 import { brandService } from '../services/brand.service.js';
@@ -12,9 +13,8 @@ import { signalmashService } from '../services/signalmash.service.js';
 import { platformService } from '../services/platform.service.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
-import type { Request, Response } from 'express';
 
-const router = Router();
+const router: RouterType = Router();
 
 /**
  * POST /webhooks/signalmash

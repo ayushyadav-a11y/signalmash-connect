@@ -2,8 +2,10 @@
 // Logger Configuration (Pino)
 // ===========================================
 
-import pino from 'pino';
+import pinoModule from 'pino';
 import { config } from '../config/index.js';
+
+const pino = (pinoModule as any).default || pinoModule;
 
 const isDevelopment = config.nodeEnv === 'development';
 
