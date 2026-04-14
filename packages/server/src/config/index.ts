@@ -27,15 +27,15 @@ const configSchema = z.object({
   sessionSecret: z.string().min(32),
   encryptionKey: z.string().length(32),
 
-  // Signalmash
+  // Signalmash (uses API Token only - get from portal.signalmash.com/#/api/tokens)
   signalmashApiUrl: z.string().url().default('https://api.signalmash.com'),
-  signalmashApiKey: z.string(),
-  signalmashAccountSid: z.string(),
+  signalmashApiKey: z.string().optional(),
+  signalmashAccountSid: z.string().optional(),
 
-  // GHL
-  ghlAppClientId: z.string(),
-  ghlAppClientSecret: z.string(),
-  ghlAppSsoKey: z.string(),
+  // GHL (get from GHL Marketplace developer portal)
+  ghlAppClientId: z.string().optional(),
+  ghlAppClientSecret: z.string().optional(),
+  ghlAppSsoKey: z.string().optional(),
   ghlApiDomain: z.string().url().default('https://services.leadconnectorhq.com'),
   ghlWebhookSecret: z.string().optional(),
 
