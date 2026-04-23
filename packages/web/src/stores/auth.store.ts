@@ -3,8 +3,9 @@
 // ===========================================
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import { api } from '@/lib/api';
+import { getSafeStorage } from '@/lib/storage';
 
 interface User {
   id: string;
@@ -118,7 +119,7 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
 
         try {
-          const response = await api.initiateOAuth('ghl');
+          const response = await api.initiateOAuth('leadconnector');
 
           if (response.success && response.data?.authUrl) {
             // Redirect to GHL OAuth
@@ -211,6 +212,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
+      storage: createJSONStorage(() => getSafeStorage()),
       partialize: (state) => ({
         user: state.user,
         organization: state.organization,

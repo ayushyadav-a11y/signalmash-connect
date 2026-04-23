@@ -31,16 +31,35 @@ const createCampaignSchema = z.object({
     'public_service_announcement',
     'security_alerts',
   ]),
+  subUsecases: z.array(z.string()).optional(),
+  embeddedLink: z.boolean().optional(),
+  embeddedPhone: z.boolean().optional(),
+  affiliateMarketing: z.boolean().optional(),
+  termsAndConditions: z.boolean().optional(),
+  numberPool: z.boolean().optional(),
+  ageGated: z.boolean().optional(),
+  directLending: z.boolean().optional(),
+  subscriberOptin: z.boolean().optional(),
+  subscriberOptout: z.boolean().optional(),
+  subscriberHelp: z.boolean().optional(),
   sampleMessages: z
     .array(z.string().min(10).max(320))
     .min(1, 'At least one sample message is required')
     .max(5, 'Maximum 5 sample messages'),
+  messageFlow: z.string().min(10).max(1000).optional(),
+  mnoIds: z.array(z.string()).optional(),
+  referenceId: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  autoRenewal: z.boolean().optional(),
   optInKeywords: z.array(z.string()).optional(),
   optOutKeywords: z.array(z.string()).optional(),
   helpKeywords: z.array(z.string()).optional(),
   optInMessage: z.string().max(320).optional(),
   optOutMessage: z.string().max(320).optional(),
   helpMessage: z.string().max(320).optional(),
+  privacyPolicyLink: z.string().url().optional().or(z.literal('')),
+  termsAndConditionsLink: z.string().url().optional().or(z.literal('')),
+  embeddedLinkSample: z.string().optional(),
 });
 
 const updateCampaignSchema = createCampaignSchema.omit({ brandId: true }).partial();
@@ -158,6 +177,28 @@ router.post(
       success: true,
       data: campaign,
       message: 'Campaign submitted for approval',
+    });
+  })
+);
+
+/**
+ * POST /campaigns/:id/refresh-status
+ * Refresh campaign approval status from Signalmash
+ */
+router.post(
+  '/:id/refresh-status',
+  authenticate,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const campaign = await campaignService.refreshApprovalStatus(
+      req.params.id,
+      req.user!.organizationId
+    );
+
+    res.json({
+      success: true,
+      data: campaign,
+      message: 'Campaign status refreshed',
     });
   })
 );

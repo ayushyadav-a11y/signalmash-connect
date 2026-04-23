@@ -3,7 +3,7 @@
 // ===========================================
 
 // Platform Types
-export type Platform = 'ghl' | 'shopify' | 'hubspot' | 'salesforce' | 'zoho';
+export type Platform = 'leadconnector' | 'shopify' | 'hubspot' | 'salesforce' | 'zoho';
 
 export type PlatformStatus = 'connected' | 'disconnected' | 'error' | 'pending';
 
@@ -285,6 +285,8 @@ export interface Message {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export * from './integration.js';
 
 export interface MessageSendInput {
   organizationId: string;

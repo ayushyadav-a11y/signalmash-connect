@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import {
   Phone,
-  Plus,
   Search,
-  MoreVertical,
   CheckCircle,
   Clock,
   XCircle,
   AlertTriangle,
-  MessageSquare,
   Trash2,
-  Edit2,
+  Sparkles,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,15 +23,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { api } from '@/lib/api';
-import { formatNumber } from '@/lib/utils';
+import { formatNumber, formatDate } from '@/lib/utils';
 import { SearchNumbersDialog } from './search-dialog';
+import { notify } from '@/stores/notification.store';
 
 interface PhoneNumber {
   id: string;
@@ -65,6 +57,12 @@ interface Stats {
   byAreaCode: Array<{ areaCode: string; count: number }>;
 }
 
+interface CampaignOption {
+  id: string;
+  name: string;
+  status: string;
+}
+
 const statusConfig = {
   active: { label: 'Active', icon: CheckCircle, variant: 'success' as const },
   pending: { label: 'Pending', icon: Clock, variant: 'warning' as const },
@@ -73,20 +71,57 @@ const statusConfig = {
 };
 
 export function PhoneNumbersPage() {
+  const navigate = useNavigate();
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchDialog, setShowSearchDialog] = useState(false);
   const [showReleaseDialog, setShowReleaseDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
   const [selectedNumber, setSelectedNumber] = useState<PhoneNumber | null>(null);
   const [isReleasing, setIsReleasing] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [campaignOptions, setCampaignOptions] = useState<CampaignOption[]>([]);
+  const [editForm, setEditForm] = useState({
+    friendlyName: '',
+    campaignId: '',
+  });
 
   useEffect(() => {
+    const loadData = async () => {
+      try {
+        setError(null);
+        const [numbersRes, statsRes] = await Promise.all([
+          api.getPhoneNumbers(),
+          api.getPhoneNumberStats(),
+        ]);
+
+        if (numbersRes.success && numbersRes.data) {
+          setPhoneNumbers(numbersRes.data);
+        }
+        if (statsRes.success && statsRes.data) {
+          setStats(statsRes.data);
+        }
+
+        const campaignsRes = await api.getCampaigns({ status: 'approved' });
+        if (campaignsRes.success && campaignsRes.data) {
+          setCampaignOptions(campaignsRes.data);
+        }
+      } catch (loadError) {
+        console.error('Failed to load phone numbers:', loadError);
+        setError('Unable to load phone number inventory right now.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     loadData();
   }, []);
 
-  const loadData = async () => {
+  const reloadData = async () => {
+    setIsLoading(true);
     try {
       const [numbersRes, statsRes] = await Promise.all([
         api.getPhoneNumbers(),
@@ -99,8 +134,14 @@ export function PhoneNumbersPage() {
       if (statsRes.success && statsRes.data) {
         setStats(statsRes.data);
       }
-    } catch (error) {
-      console.error('Failed to load phone numbers:', error);
+
+      const campaignsRes = await api.getCampaigns({ status: 'approved' });
+      if (campaignsRes.success && campaignsRes.data) {
+        setCampaignOptions(campaignsRes.data);
+      }
+    } catch (loadError) {
+      console.error('Failed to reload phone numbers:', loadError);
+      setError('Unable to refresh phone number inventory.');
     } finally {
       setIsLoading(false);
     }
@@ -112,288 +153,385 @@ export function PhoneNumbersPage() {
     setIsReleasing(true);
     try {
       await api.releasePhoneNumber(selectedNumber.id);
-      await loadData();
+      await reloadData();
       setShowReleaseDialog(false);
       setSelectedNumber(null);
-    } catch (error) {
-      console.error('Failed to release number:', error);
+      notify.success('Number released', 'The phone number was removed from active inventory.');
+    } catch (releaseError) {
+      console.error('Failed to release number:', releaseError);
+      notify.error('Release failed', 'The selected phone number could not be released.');
+      setError('Failed to release the selected phone number.');
     } finally {
       setIsReleasing(false);
     }
   };
 
-  const filteredNumbers = phoneNumbers.filter(
-    (num) =>
-      num.phoneNumber.includes(searchQuery) ||
-      num.formattedNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      num.friendlyName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      num.campaign?.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const openEditDialog = (number: PhoneNumber) => {
+    setSelectedNumber(number);
+    setEditForm({
+      friendlyName: number.friendlyName || '',
+      campaignId: number.campaign?.id || '',
+    });
+    setShowEditDialog(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedNumber) return;
+
+    setIsSavingEdit(true);
+    try {
+      const response = await api.updatePhoneNumber(selectedNumber.id, {
+        friendlyName: editForm.friendlyName || undefined,
+        campaignId: editForm.campaignId ? editForm.campaignId : null,
+      });
+
+      if (response.success) {
+        await reloadData();
+        setShowEditDialog(false);
+        setSelectedNumber(null);
+        notify.success('Number updated', 'Friendly name and campaign assignment were saved.');
+      }
+    } catch (saveError) {
+      console.error('Failed to update number:', saveError);
+      notify.error('Update failed', 'The phone number changes could not be saved.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const filteredNumbers = phoneNumbers.filter((number) => {
+    const query = searchQuery.toLowerCase();
+    return (
+      number.phoneNumber.includes(searchQuery) ||
+      number.formattedNumber.toLowerCase().includes(query) ||
+      number.friendlyName?.toLowerCase().includes(query) ||
+      number.campaign?.name.toLowerCase().includes(query)
+    );
+  });
+
+  const hasApprovedCampaigns = campaignOptions.length > 0;
+  const buyNumberLabel = hasApprovedCampaigns ? 'Buy Number' : 'Create Approved Campaign';
 
   return (
     <div>
       <Header
         title="Phone Numbers"
-        subtitle="Manage your DIDs and phone number inventory"
+        subtitle="Manage owned numbers, assignment readiness, and current DID inventory."
         action={{
-          label: 'Buy Number',
-          onClick: () => setShowSearchDialog(true),
+          label: buyNumberLabel,
+          onClick: () => {
+            if (hasApprovedCampaigns) {
+              setShowSearchDialog(true);
+              return;
+            }
+            navigate('/campaigns');
+          },
         }}
       />
 
-      <div className="p-6 space-y-6">
-        {/* Stats */}
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card variant="glass">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                    <Phone className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Numbers</p>
-                    <p className="text-2xl font-bold">{stats.total}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+      <div className="space-y-6 p-4 sm:p-6">
+        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl space-y-2">
+              <Badge variant="outline" className="w-fit border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                DID Inventory
+              </Badge>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+                Professional control over owned and assignable numbers
+              </h2>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+                Review available capacity, see campaign assignment state, and keep
+                provisioning decisions visible without the old low-contrast list styling.
+              </p>
+            </div>
 
-            <Card variant="glass">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
-                    <CheckCircle className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Active</p>
-                    <p className="text-2xl font-bold">{stats.active}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card variant="glass">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-yellow-100 dark:bg-yellow-900/30">
-                    <Clock className="h-5 w-5 text-yellow-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Pending</p>
-                    <p className="text-2xl font-bold">{stats.pending}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card variant="glass">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-gray-100 dark:bg-gray-900/30">
-                    <XCircle className="h-5 w-5 text-gray-600" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Released</p>
-                    <p className="text-2xl font-bold">{stats.released}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Total</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{stats?.total ?? 0}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Active</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{stats?.active ?? 0}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Pending</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{stats?.pending ?? 0}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Released</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{stats?.released ?? 0}</p>
+              </div>
+            </div>
           </div>
+        </section>
+
+        {!hasApprovedCampaigns && (
+          <Card className="border-amber-200 bg-amber-50 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+            <CardContent className="flex flex-col gap-4 p-6 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-2">
+                <Badge variant="warning" className="w-fit">Blocked</Badge>
+                <h3 className="text-lg font-semibold text-amber-950 dark:text-amber-100">
+                  Number provisioning is blocked until a campaign is approved
+                </h3>
+                <p className="max-w-2xl text-sm leading-6 text-amber-900/80 dark:text-amber-100/80">
+                  The embedded onboarding flow needs at least one approved campaign before a number
+                  can be bought and assigned for compliant traffic. Finish campaign approval first.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={() => navigate('/brands')}>
+                  Review Brands
+                </Button>
+                <Button onClick={() => navigate('/campaigns/new')}>
+                  Create Campaign
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
-        {/* Search */}
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Input
-              placeholder="Search by number, name, or campaign..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="h-4 w-4" />}
-            />
+        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="w-full max-w-md">
+              <Input
+                placeholder="Search by number, friendly name, or campaign"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search className="h-4 w-4" />}
+                className="border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
+              />
+            </div>
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {error}
+              </div>
+            )}
           </div>
-        </div>
+        </section>
 
-        {/* Phone Numbers List */}
         {isLoading ? (
           <div className="space-y-4">
             {[...Array(5)].map((_, i) => (
-              <Card key={i} variant="glass">
+              <Card key={i} className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardContent className="p-6">
-                  <div className="animate-pulse flex items-center gap-4">
-                    <div className="w-12 h-12 bg-muted rounded-xl" />
+                  <div className="flex animate-pulse items-center gap-4">
+                    <div className="h-12 w-12 rounded-2xl bg-slate-200 dark:bg-slate-800" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-muted rounded w-1/4" />
-                      <div className="h-3 bg-muted rounded w-1/3" />
+                      <div className="h-4 w-1/4 rounded bg-slate-200 dark:bg-slate-800" />
+                      <div className="h-3 w-1/3 rounded bg-slate-200 dark:bg-slate-800" />
                     </div>
-                    <div className="h-6 bg-muted rounded w-20" />
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
         ) : filteredNumbers.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center py-16"
-          >
-            <div className="inline-flex p-4 rounded-2xl bg-blue-100 dark:bg-blue-900/30 mb-4">
-              <Phone className="h-8 w-8 text-blue-600" />
-            </div>
-            <h3 className="text-lg font-semibold mb-2">No phone numbers yet</h3>
-            <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-              Purchase phone numbers to start sending and receiving SMS messages
-              through your campaigns.
-            </p>
-            <Button
-              onClick={() => setShowSearchDialog(true)}
-              leftIcon={<Plus className="h-4 w-4" />}
-            >
-              Buy Phone Number
-            </Button>
-          </motion.div>
+          <Card className="border-dashed border-slate-300 bg-slate-50/80 shadow-none dark:border-slate-700 dark:bg-slate-900/60">
+            <CardContent className="p-10 text-center">
+              <div className="mx-auto mb-4 inline-flex rounded-2xl border border-slate-200 bg-white p-4 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                <Phone className="h-8 w-8" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">No phone numbers found</h3>
+              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+                {hasApprovedCampaigns
+                  ? 'Purchase a number to start routing approved campaign traffic through Signalmash.'
+                  : 'Once a campaign is approved, you can purchase or assign a number here.'}
+              </p>
+              <Button
+                className="mt-6"
+                onClick={() => {
+                  if (hasApprovedCampaigns) {
+                    setShowSearchDialog(true);
+                    return;
+                  }
+                  navigate('/campaigns');
+                }}
+              >
+                {buyNumberLabel}
+              </Button>
+            </CardContent>
+          </Card>
         ) : (
           <div className="space-y-4">
-            {filteredNumbers.map((number, index) => {
+            {filteredNumbers.map((number) => {
               const status = statusConfig[number.status];
               const StatusIcon = status.icon;
 
               return (
-                <motion.div
+                <Card
                   key={number.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
+                  className="border-slate-200 bg-white shadow-sm transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-slate-700"
                 >
-                  <Card variant="glass" className="group">
-                    <CardContent className="p-6">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600">
-                          <Phone className="h-5 w-5 text-white" />
+                  <CardContent className="p-6">
+                    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="flex items-start gap-4">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                          <Phone className="h-5 w-5 text-slate-700 dark:text-slate-200" />
                         </div>
-
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold font-mono text-lg">
-                            {number.formattedNumber}
-                          </h3>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            {number.friendlyName && (
-                              <>
-                                <span>{number.friendlyName}</span>
-                                <span>•</span>
-                              </>
-                            )}
-                            {number.campaign ? (
-                              <span className="text-primary">{number.campaign.name}</span>
-                            ) : (
-                              <span className="text-yellow-600">No campaign assigned</span>
-                            )}
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <h3 className="font-mono text-lg font-semibold text-slate-950 dark:text-slate-50">
+                              {number.formattedNumber}
+                            </h3>
+                            <Badge variant={status.variant} className="gap-1">
+                              <StatusIcon className="h-3 w-3" />
+                              {status.label}
+                            </Badge>
                           </div>
-                        </div>
-
-                        <div className="flex items-center gap-4">
-                          {/* Capabilities */}
-                          <div className="hidden md:flex items-center gap-2">
-                            {number.smsCapable && (
-                              <Badge variant="outline" className="text-xs">SMS</Badge>
-                            )}
-                            {number.mmsCapable && (
-                              <Badge variant="outline" className="text-xs">MMS</Badge>
-                            )}
-                            {number.voiceCapable && (
-                              <Badge variant="outline" className="text-xs">Voice</Badge>
-                            )}
-                          </div>
-
-                          <div className="text-right hidden sm:block">
-                            <div className="flex items-center gap-1 text-sm">
-                              <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                              <span className="font-medium">
-                                {formatNumber(number._count.messages)}
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground">messages</p>
-                          </div>
-
-                          <Badge variant={status.variant} className="gap-1">
-                            <StatusIcon className="h-3 w-3" />
-                            {status.label}
-                          </Badge>
-
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                <MoreVertical className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
-                                <Edit2 className="h-4 w-4 mr-2" />
-                                Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive"
-                                onClick={() => {
-                                  setSelectedNumber(number);
-                                  setShowReleaseDialog(true);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Release Number
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            {number.friendlyName || 'No friendly name assigned'}
+                          </p>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
+
+                      <div className="flex items-center gap-2">
+                        {number.smsCapable && <Badge variant="outline">SMS</Badge>}
+                        {number.mmsCapable && <Badge variant="outline">MMS</Badge>}
+                        {number.voiceCapable && <Badge variant="outline">Voice</Badge>}
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 rounded-2xl bg-slate-50 p-4 dark:bg-slate-900 md:grid-cols-4">
+                      <div className="text-sm">
+                        <p className="text-slate-500 dark:text-slate-400">Campaign</p>
+                        <p className="mt-1 font-medium text-slate-950 dark:text-slate-50">
+                          {number.campaign?.name || 'Unassigned'}
+                        </p>
+                      </div>
+                      <div className="text-sm">
+                        <p className="text-slate-500 dark:text-slate-400">Area Code</p>
+                        <p className="mt-1 font-medium text-slate-950 dark:text-slate-50">
+                          {number.areaCode || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="text-sm">
+                        <p className="text-slate-500 dark:text-slate-400">Messages</p>
+                        <p className="mt-1 font-medium text-slate-950 dark:text-slate-50">
+                          {formatNumber(number._count.messages)}
+                        </p>
+                      </div>
+                      <div className="text-sm">
+                        <p className="text-slate-500 dark:text-slate-400">Purchased</p>
+                        <p className="mt-1 font-medium text-slate-950 dark:text-slate-50">
+                          {formatDate(number.createdAt)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex justify-end">
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => openEditDialog(number)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="border-slate-300 text-slate-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-red-500/30 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                          onClick={() => {
+                            setSelectedNumber(number);
+                            setShowReleaseDialog(true);
+                          }}
+                          leftIcon={<Trash2 className="h-4 w-4" />}
+                        >
+                          Release Number
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               );
             })}
           </div>
         )}
+
+        {stats?.byAreaCode && stats.byAreaCode.length > 0 && (
+          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-4 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-slate-400" />
+              <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">Top Area Codes</h3>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {stats.byAreaCode.slice(0, 8).map((entry) => (
+                <div key={entry.areaCode} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Area Code</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-950 dark:text-slate-50">{entry.areaCode}</p>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{entry.count} owned</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
-      {/* Search & Purchase Dialog */}
       <SearchNumbersDialog
         open={showSearchDialog}
         onClose={() => setShowSearchDialog(false)}
-        onPurchased={loadData}
+        onPurchased={reloadData}
       />
 
-      {/* Release Confirmation Dialog */}
       <Dialog open={showReleaseDialog} onOpenChange={setShowReleaseDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Release Phone Number</DialogTitle>
             <DialogDescription>
-              Are you sure you want to release{' '}
-              <span className="font-mono font-semibold">
-                {selectedNumber?.formattedNumber}
-              </span>
-              ? This action cannot be undone and you will lose this number.
+              This will release {selectedNumber?.formattedNumber} and remove it from your active inventory.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowReleaseDialog(false)}
-              disabled={isReleasing}
-            >
+            <Button variant="outline" onClick={() => setShowReleaseDialog(false)}>
               Cancel
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleReleaseNumber}
-              isLoading={isReleasing}
-            >
+            <Button variant="destructive" onClick={handleReleaseNumber} isLoading={isReleasing}>
               Release Number
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Phone Number</DialogTitle>
+            <DialogDescription>
+              Update the friendly name or assign this number to an approved campaign.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Friendly Name</label>
+              <Input
+                value={editForm.friendlyName}
+                onChange={(e) => setEditForm({ ...editForm, friendlyName: e.target.value })}
+                placeholder="Customer Success Line"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Approved Campaign</label>
+              <select
+                value={editForm.campaignId}
+                onChange={(e) => setEditForm({ ...editForm, campaignId: e.target.value })}
+                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-950 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+              >
+                <option value="">Unassigned</option>
+                {campaignOptions.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>
+                    {campaign.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit} isLoading={isSavingEdit}>
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -36,8 +36,7 @@ export function AuthCallbackPage() {
         // Redirect to dashboard after a short delay
         setTimeout(() => {
           if (isNew === 'true') {
-            // New user - maybe show onboarding later
-            navigate('/dashboard');
+            navigate('/onboarding');
           } else {
             navigate('/dashboard');
           }

@@ -20,19 +20,32 @@ const SETTINGS_KEYS = {
 const SETTINGS_CACHE_TTL = 300;
 
 interface BrandRegistrationInput {
-  legalName: string;
-  displayName: string;
-  ein?: string;
   entityType: string;
-  vertical: string;
-  streetAddress: string;
+  firstName?: string;
+  lastName?: string;
+  displayName: string;
+  companyName: string;
+  ein?: string;
+  einIssuingCountry?: string;
+  phone: string;
+  street: string;
   city: string;
   state: string;
   postalCode: string;
   country: string;
-  website: string;
-  phone: string;
   email: string;
+  stockSymbol?: string;
+  stockExchange?: string;
+  ipAddress?: string;
+  brandRelationship?: string;
+  website: string;
+  vertical: string;
+  altBusinessId?: string;
+  altBusinessIdType?: string;
+  referenceId?: string;
+  tag?: string[];
+  mobilePhone?: string;
+  businessContactEmail?: string;
 }
 
 interface BrandRegistrationResult {
@@ -40,11 +53,50 @@ interface BrandRegistrationResult {
   tcrBrandId?: string;
   status: string;
   verificationScore?: number;
+  message?: string;
+}
+
+interface RawBrandRegistrationResult {
+  brandId?: string;
+  tcrBrandId?: string;
+  status?: string | number;
+  verificationScore?: number;
+  message?: string;
+}
+
+interface BrandStatusResult {
+  status: string;
+  signalmashBrandId?: string;
+  tcrBrandId?: string;
+  verificationScore?: number;
+  rejectionReason?: string;
+  referenceId?: string;
+}
+
+interface RawBrandStatusResult {
+  status?: string | number;
+  brandId?: string;
+  tcrBrandId?: string;
+  verificationScore?: number;
+  rejectionReason?: string;
+  referenceId?: string;
+  data?: {
+    status?: string | number;
+    brandId?: string;
+    tcrBrandId?: string;
+    tcr_brand_id?: string;
+    verificationScore?: number;
+    verification_score?: number;
+    rejectionReason?: string;
+    rejection_reason?: string;
+    referenceId?: string;
+    reference_id?: string;
+  };
 }
 
 interface CampaignRegistrationInput {
   brandId: string;
-  name: string;
+  name?: string;
   description: string;
   useCase: string;
   sampleMessages: string[];
@@ -54,6 +106,25 @@ interface CampaignRegistrationInput {
   optInMessage: string;
   optOutMessage: string;
   helpMessage: string;
+  subUsecases?: string[];
+  embeddedLink?: boolean;
+  embeddedPhone?: boolean;
+  affiliateMarketing?: boolean;
+  termsAndConditions?: boolean;
+  numberPool?: boolean;
+  ageGated?: boolean;
+  directLending?: boolean;
+  subscriberOptin?: boolean;
+  subscriberOptout?: boolean;
+  subscriberHelp?: boolean;
+  messageFlow?: string;
+  mnoIds?: string[];
+  referenceId?: string;
+  autoRenewal?: boolean;
+  tag?: string[];
+  privacyPolicyLink?: string;
+  termsAndConditionsLink?: string;
+  embeddedLinkSample?: string;
 }
 
 interface CampaignRegistrationResult {
@@ -62,6 +133,41 @@ interface CampaignRegistrationResult {
   status: string;
   dailyMessageLimit?: number;
   messagesPerSecond?: number;
+  message?: string;
+}
+
+interface RawCampaignRegistrationResult {
+  campaignId?: string;
+  tcrCampaignId?: string;
+  status?: string | number;
+  dailyMessageLimit?: number;
+  messagesPerSecond?: number;
+  message?: string;
+}
+
+interface RawCampaignStatusResult {
+  status?: string | number;
+  campaignId?: string;
+  tcrCampaignId?: string;
+  rejectionReason?: string;
+  dailyMessageLimit?: number;
+  messagesPerSecond?: number;
+  data?: {
+    status?: string | number;
+    campaignId?: string;
+    tcrCampaignId?: string;
+    tcr_campaign_id?: string;
+    rejectionReason?: string;
+    rejection_reason?: string;
+    dailyMessageLimit?: number;
+    daily_message_limit?: number;
+    messagesPerSecond?: number;
+    messages_per_second?: number;
+  };
+}
+
+interface CampaignUpdateInput extends CampaignRegistrationInput {
+  campaignId: string;
 }
 
 interface SendMessageInput {
@@ -73,10 +179,27 @@ interface SendMessageInput {
 }
 
 interface SendMessageResult {
-  messageId: string;
+  messageId?: string;
   status: string;
   from: string;
   to: string;
+}
+
+interface RawSendMessageResult {
+  messageId?: string;
+  message_id?: string;
+  id?: string;
+  sid?: string;
+  status?: string | number;
+  message?: string;
+  error?: string;
+  data?: {
+    messageId?: string;
+    message_id?: string;
+    id?: string;
+    sid?: string;
+    status?: string | number;
+  };
 }
 
 interface MessageStatusResult {
@@ -88,7 +211,59 @@ interface MessageStatusResult {
   deliveredAt?: string;
 }
 
+export interface SignalmashConnectionDiagnostic {
+  testedAt: string;
+  method: 'GET';
+  requestUrl: string;
+  status: number | null;
+  ok: boolean;
+  responseBody: string;
+}
+
 export class SignalmashService {
+  private mapCampaignUseCase(useCase: string): string {
+    const mappings: Record<string, string> = {
+      two_factor_auth: '2FA',
+      account_notifications: 'ACCOUNT_NOTIFICATIONS',
+      customer_care: 'CUSTOMER_CARE',
+      delivery_notifications: 'DELIVERY_NOTIFICATIONS',
+      fraud_alerts: 'FRAUD_ALERTS',
+      higher_education: 'HIGHER_EDUCATION',
+      low_volume: 'LOW_VOLUME',
+      marketing: 'MARKETING',
+      mixed: 'MIXED',
+      polling_voting: 'POLLING_VOTING',
+      public_service_announcement: 'PUBLIC_SERVICE_ANNOUNCEMENT',
+      security_alerts: 'SECURITY_ALERTS',
+    };
+
+    return mappings[useCase] ?? useCase;
+  }
+
+  private formatPhoneNumber(phoneNumber: string): string {
+    const digits = phoneNumber.replace(/\D/g, '');
+
+    if (digits.length === 10) {
+      return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+    }
+
+    if (digits.length === 11 && digits.startsWith('1')) {
+      return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+    }
+
+    return phoneNumber;
+  }
+
+  private formatSmsEndpointPhone(phoneNumber: string): string {
+    const digits = phoneNumber.replace(/\D/g, '');
+
+    if (digits.length === 11 && digits.startsWith('1')) {
+      return digits.slice(1);
+    }
+
+    return digits;
+  }
+
   /**
    * Get a setting value from database with caching
    * Falls back to environment variables if not set in database
@@ -170,7 +345,7 @@ export class SignalmashService {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${signalmashConfig.apiKey}`,
+      'Authorization': signalmashConfig.apiKey,
     };
 
     try {
@@ -182,15 +357,58 @@ export class SignalmashService {
             body: body ? JSON.stringify(body) : undefined,
           });
 
+          const responseText = await res.text();
+
+          if (endpoint === '/messages') {
+            logger.info(
+              {
+                endpoint,
+                httpStatus: res.status,
+                ok: res.ok,
+                responseText: responseText.slice(0, 500),
+              },
+              'Signalmash messages raw response'
+            );
+          }
+
+          if (endpoint === '/registerbrand') {
+            logger.info(
+              {
+                endpoint,
+                status: res.status,
+                ok: res.ok,
+                requestBody: body,
+                responseText,
+              },
+              'Signalmash registerbrand raw response'
+            );
+          }
+
           if (!res.ok) {
-            const errorBody = await res.json().catch(() => ({})) as { message?: string };
+            const errorBody = JSON.parse(responseText || '{}') as { message?: string };
             throw new ExternalServiceError(
               'Signalmash',
               `${res.status}: ${errorBody.message || res.statusText}`
             );
           }
 
-          return res.json() as Promise<T>;
+          try {
+            return JSON.parse(responseText) as T;
+          } catch (error) {
+            logger.error(
+              {
+                endpoint,
+                status: res.status,
+                responseSnippet: responseText.slice(0, 300),
+                error,
+              },
+              'Signalmash API returned a non-JSON success response'
+            );
+            throw new ExternalServiceError(
+              'Signalmash',
+              `Unexpected non-JSON response from ${endpoint}`
+            );
+          }
         },
         { maxRetries: 3, initialDelay: 1000 }
       );
@@ -202,40 +420,122 @@ export class SignalmashService {
     }
   }
 
+  private async requestForm<T>(
+    method: string,
+    endpoint: string,
+    form: URLSearchParams
+  ): Promise<T> {
+    const signalmashConfig = await this.getConfig();
+
+    if (!signalmashConfig.apiKey) {
+      throw new ExternalServiceError(
+        'Signalmash',
+        'API key not configured. Please configure it in Admin Settings.'
+      );
+    }
+
+    const url = `${signalmashConfig.apiUrl}${endpoint}`;
+    const headers: Record<string, string> = {
+      'Accept': '*/*',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': signalmashConfig.apiKey,
+    };
+
+    try {
+      return await retry(
+        async () => {
+          const res = await fetch(url, {
+            method,
+            headers,
+            body: form.toString(),
+          });
+
+          const responseText = await res.text();
+
+          if (!res.ok) {
+            let message = res.statusText;
+            try {
+              const errorBody = JSON.parse(responseText || '{}') as { message?: string; error?: string };
+              message = errorBody.message || errorBody.error || message;
+            } catch {
+              message = responseText || message;
+            }
+
+            throw new ExternalServiceError('Signalmash', `${res.status}: ${message}`);
+          }
+
+          try {
+            return JSON.parse(responseText || '{}') as T;
+          } catch {
+            return { message: responseText } as T;
+          }
+        },
+        { maxRetries: 3, initialDelay: 1000 }
+      );
+    } catch (error) {
+      logger.error({ error, endpoint, method }, 'Signalmash form API request failed');
+      throw error;
+    }
+  }
+
   /**
    * Register a brand for 10DLC
    */
   async registerBrand(input: BrandRegistrationInput): Promise<BrandRegistrationResult> {
-    logger.info({ legalName: input.legalName }, 'Registering brand with Signalmash');
+    logger.info({ companyName: input.companyName, displayName: input.displayName }, 'Registering brand with Signalmash');
 
-    const result = await this.request<BrandRegistrationResult>(
+    const result = await this.request<RawBrandRegistrationResult>(
       'POST',
-      '/v1/brands',
+      '/registerbrand',
       {
-        legal_name: input.legalName,
-        display_name: input.displayName,
+        entityType: input.entityType,
+        firstName: input.firstName ?? '',
+        lastName: input.lastName ?? '',
+        displayName: input.displayName,
+        companyName: input.companyName,
         ein: input.ein,
-        entity_type: input.entityType,
-        vertical: input.vertical,
-        address: {
-          street: input.streetAddress,
-          city: input.city,
-          state: input.state,
-          postal_code: input.postalCode,
-          country: input.country,
-        },
-        website: input.website,
+        einIssuingCountry: input.einIssuingCountry ?? input.country,
         phone: input.phone,
+        street: input.street,
+        city: input.city,
+        state: input.state,
+        postalCode: input.postalCode,
+        country: input.country,
         email: input.email,
+        stockSymbol: input.stockSymbol ?? 'NONE',
+        stockExchange: input.stockExchange ?? 'NONE',
+        ipAddress: input.ipAddress ?? '',
+        brandRelationship: input.brandRelationship ?? 'BASIC_ACCOUNT',
+        website: input.website,
+        vertical: input.vertical,
+        altBusinessId: input.altBusinessId ?? 'NONE',
+        altBusinessIdType: input.altBusinessIdType ?? 'NONE',
+        referenceId: input.referenceId ?? 'NONE',
+        tag: input.tag ?? [],
+        mobilePhone: input.mobilePhone ?? 'NONE',
+        businessContactEmail: input.businessContactEmail ?? input.email,
       }
     );
+
+    if ((typeof result.status === 'number' && result.status >= 400) || !result.brandId) {
+      throw new ExternalServiceError(
+        'Signalmash',
+        result.message || 'Brand registration did not return a brand ID'
+      );
+    }
 
     logger.info(
       { brandId: result.brandId, status: result.status },
       'Brand registered with Signalmash'
     );
 
-    return result;
+    return {
+      brandId: result.brandId,
+      tcrBrandId: result.tcrBrandId,
+      status: String(result.status ?? 'submitted'),
+      verificationScore: result.verificationScore,
+      message: result.message,
+    };
   }
 
   /**
@@ -243,10 +543,26 @@ export class SignalmashService {
    */
   async getBrandStatus(brandId: string): Promise<{
     status: string;
+    signalmashBrandId?: string;
+    tcrBrandId?: string;
     verificationScore?: number;
     rejectionReason?: string;
+    referenceId?: string;
   }> {
-    return this.request('GET', `/v1/brands/${brandId}`);
+    const result = await this.request<RawBrandStatusResult>(
+      'GET',
+      `/brand?brandId=${encodeURIComponent(brandId)}`
+    );
+    const data = result.data ?? {};
+
+    return {
+      status: String(data.status ?? result.status ?? 'unknown'),
+      signalmashBrandId: data.brandId ?? result.brandId ?? brandId,
+      tcrBrandId: data.tcrBrandId ?? data.tcr_brand_id ?? result.tcrBrandId,
+      verificationScore: data.verificationScore ?? data.verification_score ?? result.verificationScore,
+      rejectionReason: data.rejectionReason ?? data.rejection_reason ?? result.rejectionReason,
+      referenceId: data.referenceId ?? data.reference_id ?? result.referenceId,
+    };
   }
 
   /**
@@ -255,36 +571,136 @@ export class SignalmashService {
   async registerCampaign(input: CampaignRegistrationInput): Promise<CampaignRegistrationResult> {
     logger.info({ name: input.name, brandId: input.brandId }, 'Registering campaign with Signalmash');
 
-    const result = await this.request<CampaignRegistrationResult>(
+    const [sample1, sample2, sample3, sample4, sample5] = input.sampleMessages;
+
+    const result = await this.request<RawCampaignRegistrationResult>(
       'POST',
-      '/v1/campaigns',
+      '/registercampaign',
       {
-        brand_id: input.brandId,
-        name: input.name,
+        brandId: input.brandId,
+        usecase: this.mapCampaignUseCase(input.useCase),
+        subUsecases: input.subUsecases ?? [],
         description: input.description,
-        use_case: input.useCase,
-        sample_messages: input.sampleMessages,
-        opt_in: {
-          keywords: input.optInKeywords,
-          message: input.optInMessage,
-        },
-        opt_out: {
-          keywords: input.optOutKeywords,
-          message: input.optOutMessage,
-        },
-        help: {
-          keywords: input.helpKeywords,
-          message: input.helpMessage,
-        },
+        embeddedLink: input.embeddedLink ?? false,
+        embeddedPhone: input.embeddedPhone ?? false,
+        affiliateMarketing: input.affiliateMarketing ?? false,
+        termsAndConditions: input.termsAndConditions ?? true,
+        numberPool: input.numberPool ?? false,
+        ageGated: input.ageGated ?? false,
+        directLending: input.directLending ?? false,
+        subscriberOptin: input.subscriberOptin ?? true,
+        subscriberOptout: input.subscriberOptout ?? true,
+        subscriberHelp: input.subscriberHelp ?? true,
+        sample1: sample1 ?? '',
+        sample2: sample2 ?? '',
+        sample3: sample3 ?? '',
+        sample4: sample4 ?? '',
+        sample5: sample5 ?? '',
+        messageFlow: input.messageFlow ?? input.description,
+        helpMessage: input.helpMessage,
+        mnoIds: input.mnoIds ?? [],
+        referenceId: input.referenceId ?? input.name ?? `campaign-${Date.now()}`,
+        autoRenewal: input.autoRenewal ?? true,
+        tag: input.tag ?? [],
+        optinKeywords: input.optInKeywords.join(','),
+        optoutKeywords: input.optOutKeywords.join(','),
+        helpKeywords: input.helpKeywords.join(','),
+        optinMessage: input.optInMessage,
+        optoutMessage: input.optOutMessage,
+        privacyPolicyLink: input.privacyPolicyLink ?? '',
+        termsAndConditionsLink: input.termsAndConditionsLink ?? '',
+        embeddedLinkSample: input.embeddedLinkSample ?? '',
       }
     );
+
+    if ((typeof result.status === 'number' && result.status >= 400) || !result.campaignId) {
+      throw new ExternalServiceError(
+        'Signalmash',
+        result.message || 'Campaign registration did not return a campaign ID'
+      );
+    }
 
     logger.info(
       { campaignId: result.campaignId, status: result.status },
       'Campaign registered with Signalmash'
     );
 
-    return result;
+    return {
+      campaignId: result.campaignId,
+      tcrCampaignId: result.tcrCampaignId,
+      status: String(result.status ?? 'submitted'),
+      dailyMessageLimit: result.dailyMessageLimit,
+      messagesPerSecond: result.messagesPerSecond,
+      message: result.message,
+    };
+  }
+
+  async updateCampaign(input: CampaignUpdateInput): Promise<CampaignRegistrationResult> {
+    logger.info({ campaignId: input.campaignId, brandId: input.brandId }, 'Updating campaign with Signalmash');
+
+    const [sample1, sample2, sample3, sample4, sample5] = input.sampleMessages;
+
+    const result = await this.request<RawCampaignRegistrationResult>(
+      'POST',
+      '/updateCampaign',
+      {
+        campaignId: input.campaignId,
+        brandId: input.brandId,
+        usecase: this.mapCampaignUseCase(input.useCase),
+        subUsecases: input.subUsecases ?? [],
+        description: input.description,
+        embeddedLink: input.embeddedLink ?? false,
+        embeddedPhone: input.embeddedPhone ?? false,
+        affiliateMarketing: input.affiliateMarketing ?? false,
+        termsAndConditions: input.termsAndConditions ?? true,
+        numberPool: input.numberPool ?? false,
+        ageGated: input.ageGated ?? false,
+        directLending: input.directLending ?? false,
+        subscriberOptin: input.subscriberOptin ?? true,
+        subscriberOptout: input.subscriberOptout ?? true,
+        subscriberHelp: input.subscriberHelp ?? true,
+        sample1: sample1 ?? '',
+        sample2: sample2 ?? '',
+        sample3: sample3 ?? '',
+        sample4: sample4 ?? '',
+        sample5: sample5 ?? '',
+        messageFlow: input.messageFlow ?? input.description,
+        helpMessage: input.helpMessage,
+        mnoIds: input.mnoIds ?? [],
+        referenceId: input.referenceId ?? input.name ?? input.campaignId,
+        autoRenewal: input.autoRenewal ?? true,
+        tag: input.tag ?? [],
+        optinKeywords: input.optInKeywords.join(','),
+        optoutKeywords: input.optOutKeywords.join(','),
+        helpKeywords: input.helpKeywords.join(','),
+        optinMessage: input.optInMessage,
+        optoutMessage: input.optOutMessage,
+        privacyPolicyLink: input.privacyPolicyLink ?? '',
+        termsAndConditionsLink: input.termsAndConditionsLink ?? '',
+        embeddedLinkSample: input.embeddedLinkSample ?? '',
+      }
+    );
+
+    if ((typeof result.status === 'number' && result.status >= 400) || !result.campaignId) {
+      throw new ExternalServiceError(
+        'Signalmash',
+        result.message || 'Campaign update did not return a campaign ID'
+      );
+    }
+
+    logger.info(
+      { campaignId: result.campaignId, status: result.status },
+      'Campaign updated with Signalmash'
+    );
+
+    return {
+      campaignId: result.campaignId,
+      tcrCampaignId: result.tcrCampaignId,
+      status: String(result.status ?? 'updated'),
+      dailyMessageLimit: result.dailyMessageLimit,
+      messagesPerSecond: result.messagesPerSecond,
+      message: result.message,
+    };
   }
 
   /**
@@ -292,11 +708,26 @@ export class SignalmashService {
    */
   async getCampaignStatus(campaignId: string): Promise<{
     status: string;
+    signalmashCampaignId?: string;
+    tcrCampaignId?: string;
     rejectionReason?: string;
     dailyMessageLimit?: number;
     messagesPerSecond?: number;
   }> {
-    return this.request('GET', `/v1/campaigns/${campaignId}`);
+    const result = await this.request<RawCampaignStatusResult>(
+      'GET',
+      `/campaign?campaignId=${encodeURIComponent(campaignId)}`
+    );
+    const data = result.data ?? {};
+
+    return {
+      status: String(data.status ?? result.status ?? 'unknown'),
+      signalmashCampaignId: data.campaignId ?? result.campaignId ?? campaignId,
+      tcrCampaignId: data.tcrCampaignId ?? data.tcr_campaign_id ?? result.tcrCampaignId,
+      rejectionReason: data.rejectionReason ?? data.rejection_reason ?? result.rejectionReason,
+      dailyMessageLimit: data.dailyMessageLimit ?? data.daily_message_limit ?? result.dailyMessageLimit,
+      messagesPerSecond: data.messagesPerSecond ?? data.messages_per_second ?? result.messagesPerSecond,
+    };
   }
 
   /**
@@ -305,24 +736,50 @@ export class SignalmashService {
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     logger.debug({ from: input.from, to: input.to }, 'Sending SMS via Signalmash');
 
-    const result = await this.request<SendMessageResult>(
+    const form = new URLSearchParams({
+      FROM: this.formatSmsEndpointPhone(input.from),
+      TO: this.formatSmsEndpointPhone(input.to),
+      BODY: input.body,
+      ATTACHMENT: input.mediaUrls?.[0] ?? '',
+    });
+
+    const result = await this.requestForm<RawSendMessageResult>(
       'POST',
-      '/v1/messages',
-      {
-        from: input.from,
-        to: input.to,
-        body: input.body,
-        media_urls: input.mediaUrls,
-        webhook_url: input.webhookUrl,
-      }
+      '/messages',
+      form
     );
 
+    const messageId =
+      result.data?.messageId ??
+      result.data?.message_id ??
+      result.data?.id ??
+      result.data?.sid ??
+      result.messageId ??
+      result.message_id ??
+      result.id ??
+      result.sid;
+
+    const status = result.data?.status ?? result.status ?? 'sent';
+    const numericStatus = typeof status === 'number' ? status : Number(status);
+
+    if (Number.isFinite(numericStatus) && numericStatus >= 400) {
+      throw new ExternalServiceError(
+        'Signalmash',
+        `${numericStatus}: ${result.message || result.error || 'Message send failed'}`
+      );
+    }
+
     logger.info(
-      { messageId: result.messageId, status: result.status },
+      { messageId, status },
       'Message sent via Signalmash'
     );
 
-    return result;
+    return {
+      messageId,
+      status: String(status),
+      from: input.from,
+      to: input.to,
+    };
   }
 
   /**
@@ -338,6 +795,7 @@ export class SignalmashService {
   async listAvailableNumbers(options?: {
     areaCode?: string;
     contains?: string;
+    state?: string;
     limit?: number;
   }): Promise<Array<{
     phoneNumber: string;
@@ -345,6 +803,35 @@ export class SignalmashService {
     capabilities: { sms: boolean; mms: boolean; voice: boolean };
     monthlyPrice: number;
   }>> {
+    const normalizedState = options?.state?.trim().toUpperCase();
+
+    if (normalizedState) {
+      const params = new URLSearchParams({
+        State: normalizedState,
+        Qty: String(options?.limit ?? 20),
+      });
+
+      const response = await this.request<{
+        status: number;
+        message: string;
+        data?: Array<{
+          phone_number: string;
+          rate_center?: string;
+          state?: string;
+          supplier_tier?: number;
+          provider?: string;
+          rates?: number;
+        }>;
+      }>('GET', `/searchbystate?${params.toString()}`);
+
+      return (response.data ?? []).map((number) => ({
+        phoneNumber: number.phone_number,
+        formattedNumber: this.formatPhoneNumber(number.phone_number),
+        capabilities: { sms: true, mms: true, voice: false },
+        monthlyPrice: number.rates ?? 0,
+      }));
+    }
+
     const params = new URLSearchParams();
     if (options?.areaCode) params.append('area_code', options.areaCode);
     if (options?.contains) params.append('contains', options.contains);
@@ -390,6 +877,52 @@ export class SignalmashService {
     await this.request('PATCH', `/v1/numbers/${numberId}`, {
       webhook_url: webhookUrl,
     });
+  }
+
+  async runConnectionDiagnostic(): Promise<SignalmashConnectionDiagnostic> {
+    const signalmashConfig = await this.getConfig();
+    const requestUrl = `${signalmashConfig.apiUrl}/searchbystate?State=NJ&Qty=1`;
+
+    if (!signalmashConfig.apiKey) {
+      return {
+        testedAt: new Date().toISOString(),
+        method: 'GET',
+        requestUrl,
+        status: null,
+        ok: false,
+        responseBody: 'API key not configured',
+      };
+    }
+
+    try {
+      const response = await fetch(requestUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': signalmashConfig.apiKey,
+        },
+      });
+
+      const responseBody = (await response.text()).slice(0, 500);
+
+      return {
+        testedAt: new Date().toISOString(),
+        method: 'GET',
+        requestUrl,
+        status: response.status,
+        ok: response.ok,
+        responseBody,
+      };
+    } catch (error) {
+      return {
+        testedAt: new Date().toISOString(),
+        method: 'GET',
+        requestUrl,
+        status: null,
+        ok: false,
+        responseBody: error instanceof Error ? error.message : 'Unknown diagnostic error',
+      };
+    }
   }
 }
 

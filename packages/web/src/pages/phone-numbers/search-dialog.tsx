@@ -29,7 +29,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { api } from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { notify } from '@/stores/notification.store';
 
 interface AvailableNumber {
   phoneNumber: string;
@@ -64,18 +66,29 @@ const AREA_CODES: Record<string, string[]> = {
   'Illinois': ['217', '224', '309', '312', '618', '630', '708', '773', '815', '847'],
 };
 
+const STATE_OPTIONS = [
+  { label: 'California', value: 'CA' },
+  { label: 'Texas', value: 'TX' },
+  { label: 'New York', value: 'NY' },
+  { label: 'Florida', value: 'FL' },
+  { label: 'Illinois', value: 'IL' },
+  { label: 'New Jersey', value: 'NJ' },
+];
+
 export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumbersDialogProps) {
   const [step, setStep] = useState<'search' | 'select' | 'purchase'>('search');
   const [isSearching, setIsSearching] = useState(false);
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [areaCode, setAreaCode] = useState('');
   const [contains, setContains] = useState('');
+  const [state, setState] = useState('');
   const [availableNumbers, setAvailableNumbers] = useState<AvailableNumber[]>([]);
   const [selectedNumber, setSelectedNumber] = useState<AvailableNumber | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [friendlyName, setFriendlyName] = useState('');
   const [error, setError] = useState('');
+  const [providerBlocked, setProviderBlocked] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -95,18 +108,20 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
   };
 
   const handleSearch = async () => {
-    if (!areaCode && !contains) {
-      setError('Please enter an area code or digits to search');
+    if (!areaCode && !contains && !state) {
+      setError('Please enter an area code, digits, or state to search');
       return;
     }
 
     setError('');
+    setProviderBlocked(null);
     setIsSearching(true);
 
     try {
       const response = await api.searchAvailableNumbers({
         areaCode: areaCode || undefined,
         contains: contains || undefined,
+        state: state || undefined,
         limit: 20,
       });
 
@@ -114,8 +129,14 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
         setAvailableNumbers(response.data);
         setStep('select');
       }
-    } catch (error: any) {
-      setError(error.message || 'Failed to search for numbers');
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === 'PROVIDER_CONNECTION_BLOCKED') {
+        setProviderBlocked(error.message);
+        setAvailableNumbers([]);
+        return;
+      }
+
+      setError(error instanceof Error ? error.message : 'Failed to search for numbers');
     } finally {
       setIsSearching(false);
     }
@@ -140,11 +161,21 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
       });
 
       if (response.success) {
+        notify.success('Number purchased', 'The selected phone number was added to your inventory.');
         onPurchased();
         handleClose();
       }
-    } catch (error: any) {
-      setError(error.message || 'Failed to purchase number');
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === 'PROVIDER_CONNECTION_BLOCKED') {
+        setProviderBlocked(error.message);
+        setError('');
+        notify.error('Provider connection not yet verified', error.message);
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Failed to purchase number';
+      notify.error('Purchase failed', message);
+      setError(message);
     } finally {
       setIsPurchasing(false);
     }
@@ -154,6 +185,7 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
     setStep('search');
     setAreaCode('');
     setContains('');
+    setState('');
     setAvailableNumbers([]);
     setSelectedNumber(null);
     setSelectedCampaignId('');
@@ -175,7 +207,7 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
           <DialogDescription>
             {step === 'search' && 'Find available phone numbers by area code or containing specific digits'}
             {step === 'select' && `Found ${availableNumbers.length} available numbers`}
-            {step === 'purchase' && 'Configure and purchase your selected number'}
+            {step === 'purchase' && 'Configure and purchase your selected number against an approved campaign'}
           </DialogDescription>
         </DialogHeader>
 
@@ -191,6 +223,25 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
                 className="space-y-6"
               >
                 <div className="grid gap-4">
+                  <div className="space-y-2">
+                    <Label>State</Label>
+                    <Select value={state} onValueChange={setState}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a state for provider-backed search" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STATE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label} ({option.value})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Uses the provider-backed state search contract when available.
+                    </p>
+                  </div>
+
                   <div className="space-y-2">
                     <Label>Area Code</Label>
                     <Input
@@ -245,6 +296,15 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
 
                 {error && (
                   <p className="text-sm text-destructive">{error}</p>
+                )}
+
+                {providerBlocked && (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    <p className="font-medium">Provider connection not yet verified</p>
+                    <p className="mt-1 leading-6">
+                      {providerBlocked}
+                    </p>
+                  </div>
                 )}
 
                 <Button
@@ -381,16 +441,15 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Assign to Campaign (optional)</Label>
+                    <Label>Assign to Approved Campaign</Label>
                     <Select
                       value={selectedCampaignId}
                       onValueChange={setSelectedCampaignId}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Select a campaign" />
+                        <SelectValue placeholder="Select an approved campaign" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">No campaign</SelectItem>
                         {campaigns.map((campaign) => (
                           <SelectItem key={campaign.id} value={campaign.id}>
                             {campaign.name}
@@ -399,10 +458,16 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      Assign to an approved campaign for 10DLC compliance
+                      Number purchase now requires an approved campaign so provisioning stays aligned with the embedded onboarding flow.
                     </p>
                   </div>
                 </div>
+
+                {campaigns.length === 0 && (
+                  <p className="text-sm text-destructive">
+                    No approved campaigns are available yet. Finish campaign approval before purchasing a number.
+                  </p>
+                )}
 
                 {error && (
                   <p className="text-sm text-destructive">{error}</p>
@@ -411,6 +476,7 @@ export function SearchNumbersDialog({ open, onClose, onPurchased }: SearchNumber
                 <Button
                   onClick={handlePurchase}
                   isLoading={isPurchasing}
+                  disabled={!selectedCampaignId || campaigns.length === 0}
                   className="w-full"
                   leftIcon={<Check className="h-4 w-4" />}
                 >

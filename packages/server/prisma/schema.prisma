@@ -29,7 +29,14 @@ model Organization {
   users               User[]
   brands              Brand[]
   campaigns           Campaign[]
+  platformInstallations PlatformInstallation[]
   platformConnections PlatformConnection[]
+  externalResourceMappings ExternalResourceMapping[]
+  senderProfiles      SenderProfile[]
+  suppressionEvents   SuppressionEvent[]
+  billingEvents       BillingEvent[]
+  portOrders          PortOrder[]
+  deadLetterJobs      DeadLetterJob[]
   phoneNumbers        PhoneNumber[]
   messages            Message[]
   webhookEvents       WebhookEvent[]
@@ -84,20 +91,35 @@ model RefreshToken {
 // ===========================================
 
 model Brand {
-  id            String           @id @default(uuid())
-  legalName     String           @map("legal_name")
-  displayName   String           @map("display_name")
-  ein           String?
-  entityType    EntityType       @map("entity_type")
-  vertical      BusinessVertical
-  streetAddress String           @map("street_address")
-  city          String
-  state         String
-  postalCode    String           @map("postal_code")
-  country       String           @default("US")
-  website       String
-  phone         String
-  email         String
+  id                   String            @id @default(uuid())
+  legalName            String            @map("legal_name")
+  displayName          String            @map("display_name")
+  firstName            String?           @map("first_name")
+  lastName             String?           @map("last_name")
+  ein                  String?
+  einIssuingCountry    String?           @map("ein_issuing_country")
+  entityType           EntityType        @map("entity_type")
+  providerEntityType   String?           @map("provider_entity_type")
+  vertical             BusinessVertical
+  providerVertical     String?           @map("provider_vertical")
+  brandRelationship    BrandRelationship? @map("brand_relationship")
+  streetAddress        String            @map("street_address")
+  city                 String
+  state                String
+  postalCode           String            @map("postal_code")
+  country              String            @default("US")
+  website              String
+  phone                String
+  mobilePhone          String?           @map("mobile_phone")
+  email                String
+  businessContactEmail String?           @map("business_contact_email")
+  stockSymbol          String?           @map("stock_symbol")
+  stockExchange        String?           @map("stock_exchange")
+  ipAddress            String?           @map("ip_address")
+  altBusinessId        String?           @map("alt_business_id")
+  altBusinessIdType    String?           @map("alt_business_id_type")
+  referenceId          String?           @map("reference_id")
+  tags                 Json              @default("[]")
 
   // Signalmash/TCR specific
   signalmashBrandId String?      @unique @map("signalmash_brand_id")
@@ -117,6 +139,14 @@ model Brand {
   @@index([organizationId])
   @@index([status])
   @@map("brands")
+}
+
+enum BrandRelationship {
+  BASIC_ACCOUNT
+  SMALL_ACCOUNT
+  MEDIUM_ACCOUNT
+  LARGE_ACCOUNT
+  KEY_ACCOUNT
 }
 
 enum EntityType {
@@ -158,9 +188,26 @@ model Campaign {
   name        String
   description String
   useCase     CampaignUseCase @map("use_case")
+  subUsecases Json            @default("[]") @map("sub_usecases")
+
+  embeddedLink      Boolean @default(false) @map("embedded_link")
+  embeddedPhone     Boolean @default(false) @map("embedded_phone")
+  affiliateMarketing Boolean @default(false) @map("affiliate_marketing")
+  termsAndConditions Boolean @default(true) @map("terms_and_conditions")
+  numberPool        Boolean @default(false) @map("number_pool")
+  ageGated          Boolean @default(false) @map("age_gated")
+  directLending     Boolean @default(false) @map("direct_lending")
+  subscriberOptin   Boolean @default(true) @map("subscriber_optin")
+  subscriberOptout  Boolean @default(true) @map("subscriber_optout")
+  subscriberHelp    Boolean @default(true) @map("subscriber_help")
 
   // Sample messages stored as JSON array
   sampleMessages Json @default("[]") @map("sample_messages")
+  messageFlow    String @default("") @map("message_flow")
+  mnoIds         Json   @default("[]") @map("mno_ids")
+  referenceId    String? @map("reference_id")
+  tags           Json   @default("[]")
+  autoRenewal    Boolean @default(true) @map("auto_renewal")
 
   // Opt-in/out configuration
   optInKeywords  Json   @default("[\"START\", \"YES\", \"SUBSCRIBE\"]") @map("opt_in_keywords")
@@ -169,6 +216,9 @@ model Campaign {
   optInMessage   String @default("You have been subscribed to receive messages. Reply STOP to unsubscribe.") @map("opt_in_message")
   optOutMessage  String @default("You have been unsubscribed and will no longer receive messages from us.") @map("opt_out_message")
   helpMessage    String @default("For assistance, please contact us at support@example.com") @map("help_message")
+  privacyPolicyLink String? @map("privacy_policy_link")
+  termsAndConditionsLink String? @map("terms_and_conditions_link")
+  embeddedLinkSample String? @map("embedded_link_sample")
 
   // Signalmash/TCR specific
   signalmashCampaignId String?        @unique @map("signalmash_campaign_id")
@@ -252,17 +302,20 @@ model PlatformConnection {
 
   organizationId String       @map("organization_id")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  installationId String?      @map("installation_id")
+  installation   PlatformInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
 
   messages Message[]
 
   @@unique([organizationId, platform, platformAccountId])
   @@index([organizationId])
   @@index([platform])
+  @@index([installationId])
   @@map("platform_connections")
 }
 
 enum Platform {
-  ghl
+  leadconnector
   shopify
   hubspot
   salesforce
@@ -274,6 +327,264 @@ enum PlatformStatus {
   disconnected
   error
   pending
+}
+
+enum MessagingProvider {
+  signalmash
+}
+
+enum IntegrationLifecycleState {
+  installed
+  business_details_needed
+  connection_pending
+  brand_pending
+  campaign_pending
+  campaign_approved
+  number_setup_required
+  port_in_progress
+  provider_not_activated
+  ready
+  error_attention_required
+}
+
+enum ExternalResourceKind {
+  platform_installation
+  provider_connection
+  brand
+  campaign
+  phone_number
+  message
+  contact
+  conversation
+  port_order
+}
+
+enum ExternalResourceStatus {
+  pending
+  active
+  disabled
+  failed
+  archived
+}
+
+enum SenderSelectionStrategy {
+  default_sender
+  campaign_bound
+  explicit_sender
+}
+
+enum SuppressionAction {
+  opt_out
+  opt_in
+  help
+}
+
+enum BillingDirection {
+  inbound
+  outbound
+}
+
+enum BillingUnit {
+  sms
+  mms
+  phone_number
+}
+
+enum BillingStatus {
+  pending
+  posted
+  ignored
+  failed
+}
+
+enum PortOrderStatus {
+  draft
+  submitted
+  awaiting_documents
+  in_progress
+  completed
+  rejected
+  cancelled
+}
+
+enum DeadLetterStatus {
+  pending
+  replayed
+  ignored
+}
+
+model PlatformInstallation {
+  id                  String                    @id @default(uuid())
+  platform            Platform
+  provider            MessagingProvider         @default(signalmash)
+  externalAccountId   String                    @map("external_account_id")
+  externalAccountName String?                   @map("external_account_name")
+  status              PlatformStatus            @default(pending)
+  lifecycleState      IntegrationLifecycleState @default(installed) @map("lifecycle_state")
+  metadata            Json?
+  connectedAt         DateTime?                 @map("connected_at")
+  lastSyncAt          DateTime?                 @map("last_sync_at")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  platformConnections    PlatformConnection[]
+  externalResourceMappings ExternalResourceMapping[]
+  senderProfiles         SenderProfile[]
+
+  @@unique([organizationId, platform, externalAccountId])
+  @@index([organizationId])
+  @@index([platform])
+  @@index([provider])
+  @@index([lifecycleState])
+  @@map("platform_installations")
+}
+
+model ExternalResourceMapping {
+  id                  String               @id @default(uuid())
+  kind                ExternalResourceKind
+  platform            Platform
+  provider            MessagingProvider    @default(signalmash)
+  localResourceType   String               @map("local_resource_type")
+  localResourceId     String?              @map("local_resource_id")
+  localParentId       String?              @map("local_parent_id")
+  externalId          String               @map("external_id")
+  secondaryExternalId String?              @map("secondary_external_id")
+  status              ExternalResourceStatus @default(pending)
+  metadata            Json?
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  installationId String?               @map("installation_id")
+  installation   PlatformInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, kind, externalId])
+  @@index([organizationId])
+  @@index([installationId])
+  @@index([platform])
+  @@index([localResourceType, localResourceId])
+  @@map("external_resource_mappings")
+}
+
+model SenderProfile {
+  id                String                  @id @default(uuid())
+  platform          Platform
+  senderKey         String                  @map("sender_key")
+  senderLabel       String?                 @map("sender_label")
+  selectionStrategy SenderSelectionStrategy @default(default_sender) @map("selection_strategy")
+  isDefault         Boolean                 @default(false) @map("is_default")
+  metadata          Json?
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  installationId String?               @map("installation_id")
+  installation   PlatformInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+
+  phoneNumberId String?      @map("phone_number_id")
+  phoneNumber   PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([installationId])
+  @@index([phoneNumberId])
+  @@unique([installationId, phoneNumberId])
+  @@map("sender_profiles")
+}
+
+model SuppressionEvent {
+  id          String            @id @default(uuid())
+  phoneNumber String            @map("phone_number")
+  action      SuppressionAction
+  keyword     String
+  rawText     String            @map("raw_text")
+  active      Boolean           @default(true)
+  metadata    Json?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([phoneNumber])
+  @@index([active])
+  @@map("suppression_events")
+}
+
+model BillingEvent {
+  id          String           @id @default(uuid())
+  billingKey  String           @unique @map("billing_key")
+  direction   BillingDirection
+  unit        BillingUnit
+  quantity    Int              @default(1)
+  status      BillingStatus    @default(pending)
+  source      String
+  cycleMonth  String           @map("cycle_month")
+  metadata    Json?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  messageId String?   @map("message_id")
+  message   Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([cycleMonth])
+  @@index([status])
+  @@map("billing_events")
+}
+
+model PortOrder {
+  id              String          @id @default(uuid())
+  losingCarrier   String?         @map("losing_carrier")
+  status          PortOrderStatus @default(draft)
+  requestedFocAt  DateTime?       @map("requested_foc_at")
+  completedAt     DateTime?       @map("completed_at")
+  rejectionReason String?         @map("rejection_reason")
+  metadata        Json?
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  phoneNumberId String?      @map("phone_number_id")
+  phoneNumber   PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("port_orders")
+}
+
+model DeadLetterJob {
+  id          String           @id @default(uuid())
+  queueName   String           @map("queue_name")
+  jobName     String           @map("job_name")
+  jobKey      String           @map("job_key")
+  payload     Json
+  error       String
+  status      DeadLetterStatus @default(pending)
+  replayedAt  DateTime?        @map("replayed_at")
+  metadata    Json?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  organizationId String?       @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@unique([queueName, jobKey])
+  @@index([organizationId])
+  @@index([status])
+  @@map("dead_letter_jobs")
 }
 
 // ===========================================
@@ -310,6 +621,8 @@ model PhoneNumber {
   campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   messages Message[]
+  senderProfiles SenderProfile[]
+  portOrders PortOrder[]
 
   @@index([organizationId])
   @@index([campaignId])
@@ -363,6 +676,8 @@ model Message {
 
   phoneNumberId String?      @map("phone_number_id")
   phoneNumber   PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+
+  billingEvents BillingEvent[]
 
   @@index([organizationId])
   @@index([platformConnectionId])

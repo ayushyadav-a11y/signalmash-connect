@@ -1,25 +1,20 @@
-// PM2 Ecosystem Configuration
-// Usage: pm2 start ecosystem.config.cjs
+const path = require('path');
+require('dotenv').config({ path: '/var/www/signalmash-connect/packages/server/.env' });
 
 module.exports = {
-  apps: [
-    {
-      name: 'signalmash-server',
-      cwd: './packages/server',
-      script: 'dist/index.js',
-      instances: 1,
-      exec_mode: 'fork',
-      autorestart: true,
-      watch: false,
-      max_memory_restart: '500M',
-      env_production: {
-        NODE_ENV: 'production',
-        PORT: 3001,
-      },
-      error_file: './logs/server-error.log',
-      out_file: './logs/server-out.log',
-      log_file: './logs/server-combined.log',
-      time: true,
-    },
-  ],
+  apps: [{
+    name: 'signalmash-api',
+    cwd: '/var/www/signalmash-connect/packages/server',
+    script: 'dist/index.js',
+    exec_mode: 'fork',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    env_file: '/var/www/signalmash-connect/packages/server/.env',
+    env: {
+      NODE_ENV: 'production',
+      PORT: 3000
+    }
+  }]
 };

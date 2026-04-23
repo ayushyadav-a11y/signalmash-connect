@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import {
   Building2,
-  Plus,
   Search,
-  MoreVertical,
   CheckCircle,
   Clock,
   XCircle,
   AlertCircle,
   FileText,
+  ArrowRight,
+  Globe,
+  Mail,
+  Phone,
+  ShieldCheck,
+  Users,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,21 +21,28 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
+import { formatDate } from '@/lib/utils';
 
 interface Brand {
   id: string;
   legalName: string;
-  dba: string | null;
+  displayName: string;
   vertical: string;
-  status: 'draft' | 'pending' | 'verified' | 'rejected' | 'suspended';
+  providerVertical: string | null;
+  brandRelationship: 'BASIC_ACCOUNT' | 'SMALL_ACCOUNT' | 'MEDIUM_ACCOUNT' | 'LARGE_ACCOUNT' | 'KEY_ACCOUNT' | null;
+  businessContactEmail: string | null;
+  phone: string;
+  referenceId: string | null;
+  status: 'draft' | 'pending_verification' | 'verified' | 'unverified' | 'rejected' | 'suspended';
   createdAt: string;
-  campaignCount: number;
+  website: string;
 }
 
 const statusConfig = {
   draft: { label: 'Draft', icon: FileText, variant: 'secondary' as const },
-  pending: { label: 'Pending', icon: Clock, variant: 'warning' as const },
+  pending_verification: { label: 'Pending Review', icon: Clock, variant: 'warning' as const },
   verified: { label: 'Verified', icon: CheckCircle, variant: 'success' as const },
+  unverified: { label: 'Unverified', icon: AlertCircle, variant: 'warning' as const },
   rejected: { label: 'Rejected', icon: XCircle, variant: 'destructive' as const },
   suspended: { label: 'Suspended', icon: AlertCircle, variant: 'destructive' as const },
 };
@@ -44,156 +54,258 @@ export function BrandsPage() {
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
+    const loadBrands = async () => {
+      try {
+        const response = await api.getBrands();
+        if (response.success && response.data) {
+          setBrands(response.data);
+        }
+      } catch (error) {
+        console.error('Failed to load brands:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     loadBrands();
   }, []);
 
-  const loadBrands = async () => {
-    try {
-      const response = await api.getBrands();
-      if (response.success && response.data) {
-        setBrands(response.data);
-      }
-    } catch (error) {
-      console.error('Failed to load brands:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const filteredBrands = brands.filter((brand) => {
+    const query = searchQuery.toLowerCase();
+    return (
+      brand.legalName.toLowerCase().includes(query) ||
+      brand.displayName.toLowerCase().includes(query) ||
+      brand.vertical.toLowerCase().includes(query) ||
+      brand.brandRelationship?.toLowerCase().includes(query) ||
+      brand.businessContactEmail?.toLowerCase().includes(query) ||
+      brand.referenceId?.toLowerCase().includes(query)
+    );
+  });
 
-  const filteredBrands = brands.filter(
-    (brand) =>
-      brand.legalName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      brand.dba?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const summary = {
+    total: brands.length,
+    verified: brands.filter((brand) => brand.status === 'verified').length,
+    pending: brands.filter((brand) => brand.status === 'pending_verification').length,
+    draft: brands.filter((brand) => brand.status === 'draft' || brand.status === 'unverified').length,
+  };
 
   return (
     <div>
       <Header
         title="Brands"
-        subtitle="Manage your 10DLC brand registrations"
+        subtitle="Manage 10DLC brand registrations with clearer status visibility."
         action={{
           label: 'Register Brand',
           onClick: () => navigate('/brands/new'),
         }}
       />
 
-      <div className="p-6 space-y-6">
-        {/* Search and Filters */}
-        <div className="flex items-center gap-4">
-          <div className="relative flex-1 max-w-md">
+      <div className="space-y-6 p-4 sm:p-6">
+        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl space-y-2">
+              <Badge variant="outline" className="w-fit border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                Brand Registry
+              </Badge>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+                Professional visibility for brand registration progress
+              </h2>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+                Review brand readiness, search quickly, and move into registration without
+                the low-contrast visual noise from the previous layout.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Total</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.total}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Verified</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.verified}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Pending</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.pending}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {summary.verified === 0 && (
+          <Card className="border-amber-200 bg-amber-50 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+            <CardContent className="flex flex-col gap-4 p-6 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-2">
+                <Badge variant="warning" className="w-fit">Onboarding blocker</Badge>
+                <h3 className="text-lg font-semibold text-amber-950 dark:text-amber-100">
+                  No verified brand is available yet
+                </h3>
+                <p className="max-w-2xl text-sm leading-6 text-amber-900/80 dark:text-amber-100/80">
+                  The embedded rollout cannot proceed into campaign approval or number provisioning
+                  until at least one business brand is verified. Create a draft, submit it, and return
+                  here to monitor approval.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                {summary.draft > 0 && (
+                  <Button variant="outline" onClick={() => navigate('/brands')}>
+                    Review Drafts
+                  </Button>
+                )}
+                <Button onClick={() => navigate('/brands/new')}>
+                  Register Brand
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="max-w-md">
             <Input
-              placeholder="Search brands..."
+              placeholder="Search brands by legal name, display name, vertical, relationship, or reference"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search className="h-4 w-4" />}
+              className="border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
             />
           </div>
-        </div>
+        </section>
 
-        {/* Brands Grid */}
         {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {[...Array(6)].map((_, i) => (
-              <Card key={i} variant="glass">
+              <Card key={i} className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardContent className="p-6">
-                  <div className="animate-pulse space-y-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-muted rounded-xl" />
-                      <div className="flex-1 space-y-2">
-                        <div className="h-4 bg-muted rounded w-3/4" />
-                        <div className="h-3 bg-muted rounded w-1/2" />
-                      </div>
+                  <div className="space-y-4 animate-pulse">
+                    <div className="h-12 w-12 rounded-2xl bg-slate-200 dark:bg-slate-800" />
+                    <div className="space-y-2">
+                      <div className="h-4 w-2/3 rounded bg-slate-200 dark:bg-slate-800" />
+                      <div className="h-3 w-1/2 rounded bg-slate-200 dark:bg-slate-800" />
                     </div>
-                    <div className="h-3 bg-muted rounded w-full" />
-                    <div className="flex justify-between">
-                      <div className="h-6 bg-muted rounded w-20" />
-                      <div className="h-6 bg-muted rounded w-16" />
-                    </div>
+                    <div className="h-16 rounded-2xl bg-slate-100 dark:bg-slate-900" />
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
         ) : filteredBrands.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center py-16"
-          >
-            <div className="inline-flex p-4 rounded-2xl bg-blue-100 dark:bg-blue-900/30 mb-4">
-              <Building2 className="h-8 w-8 text-blue-600" />
-            </div>
-            <h3 className="text-lg font-semibold mb-2">No brands registered</h3>
-            <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-              Register your first brand to start sending SMS messages through
-              10DLC compliant channels.
-            </p>
-            <Button onClick={() => navigate('/brands/new')} leftIcon={<Plus className="h-4 w-4" />}>
-              Register Brand
-            </Button>
-          </motion.div>
+          <Card className="border-dashed border-slate-300 bg-slate-50/80 shadow-none dark:border-slate-700 dark:bg-slate-900/60">
+            <CardContent className="p-10 text-center">
+              <div className="mx-auto mb-4 inline-flex rounded-2xl border border-slate-200 bg-white p-4 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                <Building2 className="h-8 w-8" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">
+                No brands found
+              </h3>
+              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+                Register your first brand to start the compliance workflow required for messaging.
+              </p>
+              <Button className="mt-6" onClick={() => navigate('/brands/new')}>
+                Register Brand
+              </Button>
+            </CardContent>
+          </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredBrands.map((brand, index) => {
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {filteredBrands.map((brand) => {
               const status = statusConfig[brand.status];
               const StatusIcon = status.icon;
 
               return (
-                <motion.div
+                <Card
                   key={brand.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.05 }}
+                  className="cursor-pointer border-slate-200 bg-white shadow-sm transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-slate-700"
+                  onClick={() => navigate(`/brands/${brand.id}`)}
                 >
-                  <Card
-                    variant="glass"
-                    className="card-lift cursor-pointer group"
-                    onClick={() => navigate(`/brands/${brand.id}`)}
-                  >
-                    <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="p-3 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 group-hover:scale-110 transition-transform duration-300">
-                            <Building2 className="h-5 w-5 text-white" />
-                          </div>
-                          <div>
-                            <h3 className="font-semibold">{brand.legalName}</h3>
-                            {brand.dba && (
-                              <p className="text-sm text-muted-foreground">
-                                DBA: {brand.dba}
-                              </p>
-                            )}
-                          </div>
+                  <CardContent className="p-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-4">
+                        <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                          <Building2 className="h-5 w-5 text-slate-700 dark:text-slate-200" />
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Menu actions
-                          }}
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">
+                            {brand.legalName}
+                          </h3>
+                          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                            Display name: {brand.displayName}
+                          </p>
+                        </div>
                       </div>
+                      <Badge variant={status.variant} className="gap-1">
+                        <StatusIcon className="h-3 w-3" />
+                        {status.label}
+                      </Badge>
+                    </div>
 
-                      <p className="text-sm text-muted-foreground mb-4 capitalize">
-                        {brand.vertical.replace(/_/g, ' ')}
-                      </p>
-
-                      <div className="flex items-center justify-between">
-                        <Badge variant={status.variant} className="gap-1">
-                          <StatusIcon className="h-3 w-3" />
-                          {status.label}
-                        </Badge>
-                        <span className="text-sm text-muted-foreground">
-                          {brand.campaignCount} campaign{brand.campaignCount !== 1 ? 's' : ''}
+                    <div className="mt-5 grid gap-3 rounded-2xl bg-slate-50 p-4 dark:bg-slate-900">
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-slate-500 dark:text-slate-400">Vertical</span>
+                        <span className="font-medium capitalize text-slate-950 dark:text-slate-50">
+                          {(brand.providerVertical || brand.vertical).replace(/_/g, ' ')}
                         </span>
                       </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                          <Users className="h-4 w-4" />
+                          Relationship
+                        </span>
+                        <span className="font-medium text-slate-950 dark:text-slate-50">
+                          {brand.brandRelationship || 'Not set'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-slate-500 dark:text-slate-400">Created</span>
+                        <span className="font-medium text-slate-950 dark:text-slate-50">
+                          {formatDate(brand.createdAt)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                          <Globe className="h-4 w-4" />
+                          Website
+                        </span>
+                        <span className="max-w-[60%] truncate font-medium text-slate-950 dark:text-slate-50">
+                          {brand.website}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                          <Mail className="h-4 w-4" />
+                          Business Email
+                        </span>
+                        <span className="max-w-[60%] truncate font-medium text-slate-950 dark:text-slate-50">
+                          {brand.businessContactEmail || 'Not set'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                          <Phone className="h-4 w-4" />
+                          Support Phone
+                        </span>
+                        <span className="max-w-[60%] truncate font-medium text-slate-950 dark:text-slate-50">
+                          {brand.phone || 'Not set'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="inline-flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                          <ShieldCheck className="h-4 w-4" />
+                          Reference
+                        </span>
+                        <span className="max-w-[60%] truncate font-medium text-slate-950 dark:text-slate-50">
+                          {brand.referenceId || 'Not set'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex items-center justify-end text-sm font-medium text-slate-600 dark:text-slate-300">
+                      Review details
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </div>
+                  </CardContent>
+                </Card>
               );
             })}
           </div>

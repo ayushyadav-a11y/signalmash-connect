@@ -8,7 +8,10 @@ import { AppLayout } from '@/components/layout/app-layout';
 // Auth pages (SSO-based)
 import { ConnectPage } from '@/pages/auth/connect';
 import { AuthCallbackPage } from '@/pages/auth/callback';
+import { GhlSsoPage } from '@/pages/auth/ghl-sso';
+import { InstallCompletePage } from '@/pages/auth/install-complete';
 // App pages
+import { OnboardingPage } from '@/pages/onboarding';
 import { DashboardPage } from '@/pages/dashboard';
 import { BrandsPage } from '@/pages/brands';
 import { NewBrandPage } from '@/pages/brands/new';
@@ -164,6 +167,26 @@ export default function App() {
             </NoAuthCheckRoute>
           }
         />
+        <Route
+          path="/auth/install-complete"
+          element={
+            <NoAuthCheckRoute>
+              <InstallCompletePage />
+            </NoAuthCheckRoute>
+          }
+        />
+        <Route
+          path="/auth/embed"
+          element={
+            <NoAuthCheckRoute>
+              <GhlSsoPage />
+            </NoAuthCheckRoute>
+          }
+        />
+        <Route
+          path="/auth/ghl-sso"
+          element={<Navigate to="/auth/embed" replace />}
+        />
         {/* Legacy login redirect to connect */}
         <Route path="/login" element={<Navigate to="/connect" replace />} />
         <Route path="/register" element={<Navigate to="/connect" replace />} />
@@ -178,6 +201,7 @@ export default function App() {
           }
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="brands" element={<BrandsPage />} />
           <Route path="brands/new" element={<NewBrandPage />} />

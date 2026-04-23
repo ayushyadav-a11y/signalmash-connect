@@ -117,7 +117,7 @@ router.get(
 
 const purchaseBodySchema = z.object({
   phoneNumber: z.string().min(10).max(15),
-  campaignId: z.string().uuid().optional(),
+  campaignId: z.string().uuid(),
   friendlyName: z.string().max(100).optional(),
 });
 

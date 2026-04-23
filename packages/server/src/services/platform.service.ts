@@ -7,6 +7,7 @@ import { encrypt, decrypt } from '../utils/crypto.js';
 import { NotFoundError, ConflictError, BadRequestError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import type { PlatformConnection, Platform, PlatformStatus } from '@prisma/client';
+import { integrationService } from './integration.service.js';
 
 interface CreateConnectionInput {
   organizationId: string;
@@ -80,6 +81,8 @@ export class PlatformService {
       'Platform connection created'
     );
 
+    await integrationService.syncInstallationFromConnection(connection);
+
     return connection;
   }
 
@@ -92,6 +95,18 @@ export class PlatformService {
         id,
         organizationId,
       },
+    });
+
+    if (!connection) {
+      throw new NotFoundError('Platform connection not found');
+    }
+
+    return connection;
+  }
+
+  async getByIdUnsafe(id: string): Promise<PlatformConnection> {
+    const connection = await prisma.platformConnection.findUnique({
+      where: { id },
     });
 
     if (!connection) {
@@ -132,6 +147,48 @@ export class PlatformService {
     });
   }
 
+  async getConnectionSummaries(
+    organizationId: string,
+    platform?: Platform
+  ) {
+    const [connections, installations] = await Promise.all([
+      prisma.platformConnection.findMany({
+        where: {
+          organizationId,
+          ...(platform && { platform }),
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      integrationService.getInstallationOverview(organizationId, platform),
+    ]);
+
+    const installationById = new Map(installations.map((installation) => [installation.id, installation]));
+    const installationByAccount = new Map(
+      installations.map((installation) => [`${installation.platform}:${installation.externalAccountId}`, installation])
+    );
+
+    return connections.map((connection) => {
+      const installation =
+        (connection.installationId ? installationById.get(connection.installationId) : undefined) ??
+        installationByAccount.get(`${connection.platform}:${connection.platformAccountId}`);
+
+      return {
+        ...connection,
+        installation: installation
+          ? {
+              id: installation.id,
+              lifecycleState: installation.lifecycleState,
+              connectedAt: installation.connectedAt,
+              lastSyncAt: installation.lastSyncAt,
+              providerActivation: installation.providerActivation,
+              resourceCounts: installation.resourceCounts,
+              checklist: installation.checklist,
+            }
+          : null,
+      };
+    });
+  }
+
   /**
    * Update connection
    */
@@ -155,6 +212,8 @@ export class PlatformService {
     });
 
     logger.info({ connectionId: id }, 'Platform connection updated');
+
+    await integrationService.syncInstallationFromConnection(connection);
 
     return connection;
   }

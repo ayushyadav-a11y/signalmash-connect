@@ -3,10 +3,14 @@
 // ===========================================
 
 import { prisma } from '../config/database.js';
+import { config } from '../config/index.js';
 import { signalmashService } from './signalmash.service.js';
-import { AppError } from '../utils/errors.js';
+import { AppError, ExternalServiceError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { PhoneNumberStatus } from '@prisma/client';
+import type { Brand, Campaign, PhoneNumber, PhoneNumberStatus } from '@prisma/client';
+import { integrationService } from './integration.service.js';
+import { deadLetterService } from './dead-letter.service.js';
+import { formatPhoneE164 } from '@signalmash-connect/shared';
 
 interface AvailableNumber {
   phoneNumber: string;
@@ -27,7 +31,26 @@ interface SearchOptions {
   limit?: number;
 }
 
+interface LinkExistingAssetsInput {
+  organizationId: string;
+  brandName: string;
+  signalmashBrandId: string;
+  tcrBrandId?: string;
+  campaignName: string;
+  signalmashCampaignId: string;
+  tcrCampaignId?: string;
+  phoneNumber: string;
+  signalmashNumberId?: string;
+  friendlyName?: string;
+  configureWebhook?: boolean;
+  makeDefaultSender?: boolean;
+}
+
 export class PhoneNumberService {
+  private getSignalmashWebhookUrl(): string {
+    return `${config.apiUrl}/webhooks/signalmash`;
+  }
+
   // ===========================================
   // Search Available Numbers
   // ===========================================
@@ -42,13 +65,14 @@ export class PhoneNumberService {
       const numbers = await signalmashService.listAvailableNumbers({
         areaCode: options.areaCode,
         contains: options.contains,
+        state: options.state,
         limit: options.limit || 20,
       });
 
       return numbers.map((n) => ({
         phoneNumber: n.phoneNumber,
         formattedNumber: n.formattedNumber,
-        areaCode: n.phoneNumber.slice(2, 5), // Extract area code from +1XXXNNNNNNN
+        areaCode: this.extractAreaCode(n.phoneNumber),
         capabilities: {
           sms: n.capabilities.sms,
           mms: n.capabilities.mms,
@@ -57,6 +81,20 @@ export class PhoneNumberService {
         monthlyPrice: n.monthlyPrice,
       }));
     } catch (error) {
+      if (error instanceof ExternalServiceError) {
+        throw new AppError(
+          'Provider connection not yet verified. Ask an admin to run the Signalmash connection test in Runtime Settings before searching numbers.',
+          'PROVIDER_CONNECTION_BLOCKED',
+          503,
+          true,
+          {
+            provider: 'signalmash',
+            operation: 'search_available_numbers',
+            upstreamMessage: error.message,
+          }
+        );
+      }
+
       logger.error({ error }, 'Failed to search available numbers');
       throw error;
     }
@@ -88,37 +126,51 @@ export class PhoneNumberService {
       throw new AppError('Phone number is already owned', 'NUMBER_ALREADY_OWNED', 400);
     }
 
-    // Validate campaign if provided
-    if (options.campaignId) {
-      const campaign = await prisma.campaign.findFirst({
-        where: {
-          id: options.campaignId,
-          organizationId,
-        },
-      });
-
-      if (!campaign) {
-        throw new AppError('Campaign not found', 'CAMPAIGN_NOT_FOUND', 404);
-      }
-
-      if (campaign.status !== 'approved') {
-        throw new AppError(
-          'Campaign must be approved before assigning phone numbers',
-          'CAMPAIGN_NOT_APPROVED',
-          400
-        );
-      }
+    if (!options.campaignId) {
+      throw new AppError(
+        'An approved campaign is required before purchasing a phone number',
+        'CAMPAIGN_REQUIRED_FOR_NUMBER_PURCHASE',
+        400
+      );
     }
+
+    const campaign = await prisma.campaign.findFirst({
+      where: {
+        id: options.campaignId,
+        organizationId,
+      },
+    });
+
+    if (!campaign) {
+      throw new AppError('Campaign not found', 'CAMPAIGN_NOT_FOUND', 404);
+    }
+
+    if (campaign.status !== 'approved') {
+      throw new AppError(
+        'Campaign must be approved before assigning phone numbers',
+        'CAMPAIGN_NOT_APPROVED',
+        400
+      );
+    }
+
+    let providerNumberId: string | null = null;
 
     try {
       // Purchase from Signalmash
       const result = await signalmashService.purchaseNumber(
         phoneNumber,
-        options.campaignId || ''
+        options.campaignId
+      );
+      providerNumberId = result.numberId;
+
+      await signalmashService.configureWebhook(
+        result.numberId,
+        this.getSignalmashWebhookUrl()
       );
 
       // Extract area code
-      const areaCode = phoneNumber.replace(/\D/g, '').slice(1, 4);
+      const areaCode = this.extractAreaCode(phoneNumber);
+      // Extract area code
 
       // Store in database
       const number = await prisma.phoneNumber.create({
@@ -128,7 +180,7 @@ export class PhoneNumberService {
           friendlyName: options.friendlyName,
           areaCode,
           signalmashNumberId: result.numberId,
-          status: 'active',
+          status: this.mapProviderNumberStatus(result.status),
           organizationId,
           campaignId: options.campaignId,
           smsCapable: true,
@@ -148,11 +200,301 @@ export class PhoneNumberService {
 
       logger.info({ numberId: number.id, phoneNumber }, 'Phone number purchased');
 
+      await integrationService.syncPhoneNumberMapping(number);
+
       return number;
     } catch (error) {
+      if (providerNumberId) {
+        try {
+          await signalmashService.releaseNumber(providerNumberId);
+        } catch (releaseError) {
+          await deadLetterService.record({
+            queueName: 'phone-number-provisioning',
+            jobName: 'release-purchased-number-after-db-failure',
+            jobKey: `${organizationId}:${phoneNumber}:release-after-failure`,
+            organizationId,
+            payload: {
+              organizationId,
+              phoneNumber,
+              providerNumberId,
+              campaignId: options.campaignId,
+            },
+            error: releaseError instanceof Error ? releaseError.message : 'Unknown release failure',
+            metadata: {
+              stage: 'db-create-rollback',
+            },
+          });
+        }
+      }
+
+      if (error instanceof ExternalServiceError) {
+        throw new AppError(
+          'Provider connection not yet verified. Ask an admin to run the Signalmash connection test in Runtime Settings before purchasing numbers.',
+          'PROVIDER_CONNECTION_BLOCKED',
+          503,
+          true,
+          {
+            provider: 'signalmash',
+            operation: 'purchase_number',
+            upstreamMessage: error.message,
+          }
+        );
+      }
+
       logger.error({ error, phoneNumber }, 'Failed to purchase phone number');
       throw error;
     }
+  }
+
+  async configureExistingNumberWebhooks(): Promise<{
+    configured: number;
+    failed: Array<{ id: string; phoneNumber: string; reason: string }>;
+  }> {
+    const numbers = await prisma.phoneNumber.findMany({
+      where: {
+        signalmashNumberId: {
+          not: null,
+        },
+        status: 'active',
+      },
+      select: {
+        id: true,
+        phoneNumber: true,
+        signalmashNumberId: true,
+      },
+    });
+
+    const failed: Array<{ id: string; phoneNumber: string; reason: string }> = [];
+    let configured = 0;
+    const webhookUrl = this.getSignalmashWebhookUrl();
+
+    for (const number of numbers) {
+      try {
+        await signalmashService.configureWebhook(number.signalmashNumberId!, webhookUrl);
+        configured += 1;
+      } catch (error) {
+        failed.push({
+          id: number.id,
+          phoneNumber: number.phoneNumber,
+          reason: error instanceof Error ? error.message : 'Unknown webhook configuration failure',
+        });
+      }
+    }
+
+    return { configured, failed };
+  }
+
+  async linkExistingAssets(input: LinkExistingAssetsInput): Promise<{
+    brand: Brand;
+    campaign: Campaign;
+    phoneNumber: PhoneNumber;
+    webhookConfigured: boolean;
+    webhookError?: string;
+  }> {
+    const normalizedPhoneNumber = formatPhoneE164(input.phoneNumber);
+    const organization = await prisma.organization.findUnique({
+      where: { id: input.organizationId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        website: true,
+      },
+    });
+
+    if (!organization) {
+      throw new AppError('Organization not found', 'ORGANIZATION_NOT_FOUND', 404);
+    }
+
+    const [brandOwnedByOtherOrg, campaignOwnedByOtherOrg, numberOwnedByOtherOrg] = await Promise.all([
+      prisma.brand.findFirst({
+        where: {
+          signalmashBrandId: input.signalmashBrandId,
+          organizationId: { not: input.organizationId },
+        },
+      }),
+      prisma.campaign.findFirst({
+        where: {
+          signalmashCampaignId: input.signalmashCampaignId,
+          organizationId: { not: input.organizationId },
+        },
+      }),
+      prisma.phoneNumber.findFirst({
+        where: {
+          phoneNumber: normalizedPhoneNumber,
+          organizationId: { not: input.organizationId },
+          status: { not: 'released' },
+        },
+      }),
+    ]);
+
+    if (brandOwnedByOtherOrg) {
+      throw new AppError('Signalmash brand is already linked to another organization', 'BRAND_ALREADY_LINKED', 409);
+    }
+
+    if (campaignOwnedByOtherOrg) {
+      throw new AppError('Signalmash campaign is already linked to another organization', 'CAMPAIGN_ALREADY_LINKED', 409);
+    }
+
+    if (numberOwnedByOtherOrg) {
+      throw new AppError('Phone number is already linked to another organization', 'NUMBER_ALREADY_LINKED', 409);
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const brand =
+        (await tx.brand.findFirst({
+          where: {
+            organizationId: input.organizationId,
+            signalmashBrandId: input.signalmashBrandId,
+          },
+        })) ??
+        (await tx.brand.create({
+          data: {
+            organizationId: input.organizationId,
+            legalName: input.brandName,
+            displayName: input.brandName,
+            entityType: 'corporation',
+            vertical: 'other',
+            streetAddress: 'Linked externally',
+            city: 'External',
+            state: 'NA',
+            postalCode: '00000',
+            country: 'US',
+            website: organization.website ?? 'https://example.com',
+            phone: organization.phone ?? normalizedPhoneNumber,
+            email: organization.email,
+            businessContactEmail: organization.email,
+            signalmashBrandId: input.signalmashBrandId,
+            tcrBrandId: input.tcrBrandId,
+            status: 'verified',
+            tags: ['linked-existing'],
+          },
+        }));
+
+      const syncedBrand = await tx.brand.update({
+        where: { id: brand.id },
+        data: {
+          legalName: input.brandName,
+          displayName: input.brandName,
+          signalmashBrandId: input.signalmashBrandId,
+          tcrBrandId: input.tcrBrandId ?? brand.tcrBrandId,
+          status: 'verified',
+          rejectionReason: null,
+        },
+      });
+
+      const campaign =
+        (await tx.campaign.findFirst({
+          where: {
+            organizationId: input.organizationId,
+            signalmashCampaignId: input.signalmashCampaignId,
+          },
+        })) ??
+        (await tx.campaign.create({
+          data: {
+            organizationId: input.organizationId,
+            brandId: syncedBrand.id,
+            name: input.campaignName,
+            description: `Linked existing Signalmash campaign ${input.signalmashCampaignId}`,
+            useCase: 'customer_care',
+            sampleMessages: ['Hello, this is a test message from our approved messaging campaign.'],
+            messageFlow: 'Existing Signalmash campaign linked for live send-flow validation.',
+            signalmashCampaignId: input.signalmashCampaignId,
+            tcrCampaignId: input.tcrCampaignId,
+            status: 'approved',
+            tags: ['linked-existing'],
+          },
+        }));
+
+      const syncedCampaign = await tx.campaign.update({
+        where: { id: campaign.id },
+        data: {
+          brandId: syncedBrand.id,
+          name: input.campaignName,
+          signalmashCampaignId: input.signalmashCampaignId,
+          tcrCampaignId: input.tcrCampaignId ?? campaign.tcrCampaignId,
+          status: 'approved',
+          rejectionReason: null,
+        },
+      });
+
+      const existingNumber = await tx.phoneNumber.findFirst({
+        where: {
+          organizationId: input.organizationId,
+          phoneNumber: normalizedPhoneNumber,
+        },
+      });
+
+      const phoneNumber = existingNumber
+        ? await tx.phoneNumber.update({
+            where: { id: existingNumber.id },
+            data: {
+              formattedNumber: this.formatPhoneNumber(normalizedPhoneNumber),
+              friendlyName: input.friendlyName ?? existingNumber.friendlyName,
+              areaCode: this.extractAreaCode(normalizedPhoneNumber),
+              signalmashNumberId: input.signalmashNumberId ?? existingNumber.signalmashNumberId,
+              status: 'active',
+              campaignId: syncedCampaign.id,
+              smsCapable: true,
+              mmsCapable: true,
+            },
+          })
+        : await tx.phoneNumber.create({
+            data: {
+              organizationId: input.organizationId,
+              campaignId: syncedCampaign.id,
+              phoneNumber: normalizedPhoneNumber,
+              formattedNumber: this.formatPhoneNumber(normalizedPhoneNumber),
+              friendlyName: input.friendlyName,
+              areaCode: this.extractAreaCode(normalizedPhoneNumber),
+              signalmashNumberId: input.signalmashNumberId,
+              status: 'active',
+              smsCapable: true,
+              mmsCapable: true,
+              voiceCapable: false,
+            },
+          });
+
+      return { brand: syncedBrand, campaign: syncedCampaign, phoneNumber };
+    });
+
+    await integrationService.syncBrandMapping(result.brand);
+    await integrationService.syncCampaignMapping(result.campaign);
+    await integrationService.syncPhoneNumberMapping(result.phoneNumber);
+    await this.ensureDefaultSenderProfiles(result.phoneNumber, input.makeDefaultSender ?? true);
+
+    let webhookConfigured = false;
+    let webhookError: string | undefined;
+    if (input.configureWebhook && !input.signalmashNumberId) {
+      webhookError = 'Signalmash Number ID is required to configure the number webhook automatically.';
+    }
+
+    if (input.configureWebhook && input.signalmashNumberId) {
+      try {
+        await signalmashService.configureWebhook(
+          input.signalmashNumberId,
+          this.getSignalmashWebhookUrl()
+        );
+        webhookConfigured = true;
+      } catch (error) {
+        webhookError = error instanceof Error ? error.message : 'Unknown webhook configuration failure';
+        logger.warn({ error, phoneNumber: normalizedPhoneNumber }, 'Linked number but failed to configure webhook');
+      }
+    }
+
+    logger.info(
+      {
+        organizationId: input.organizationId,
+        brandId: result.brand.id,
+        campaignId: result.campaign.id,
+        phoneNumberId: result.phoneNumber.id,
+        webhookConfigured,
+      },
+      'Existing Signalmash assets linked to organization'
+    );
+
+    return { ...result, webhookConfigured, webhookError };
   }
 
   // ===========================================
@@ -320,6 +662,8 @@ export class PhoneNumberService {
 
     logger.info({ numberId }, 'Phone number updated');
 
+    await integrationService.syncPhoneNumberMapping(updated);
+
     return updated;
   }
 
@@ -350,8 +694,26 @@ export class PhoneNumberService {
 
       logger.info({ numberId, phoneNumber: number.phoneNumber }, 'Phone number released');
 
+      await integrationService.markPhoneNumberReleased(numberId);
+
       return { success: true };
     } catch (error) {
+      await deadLetterService.record({
+        queueName: 'phone-number-provisioning',
+        jobName: 'release-number',
+        jobKey: `${organizationId}:${numberId}:release`,
+        organizationId,
+        payload: {
+          organizationId,
+          numberId,
+          phoneNumber: number.phoneNumber,
+          signalmashNumberId: number.signalmashNumberId,
+        },
+        error: error instanceof Error ? error.message : 'Unknown release failure',
+        metadata: {
+          stage: 'provider-release',
+        },
+      });
       logger.error({ error, numberId }, 'Failed to release phone number');
       throw error;
     }
@@ -400,6 +762,85 @@ export class PhoneNumberService {
   // Helpers
   // ===========================================
 
+  private async ensureDefaultSenderProfiles(number: PhoneNumber, makeDefault: boolean) {
+    const installations = await prisma.platformInstallation.findMany({
+      where: {
+        organizationId: number.organizationId,
+        platform: 'leadconnector',
+      },
+      select: { id: true },
+    });
+
+    const installationIds = installations.map((installation) => installation.id);
+    const targets = installationIds.length > 0 ? installationIds : [null];
+
+    for (const installationId of targets) {
+      if (makeDefault) {
+        await prisma.senderProfile.updateMany({
+          where: {
+            organizationId: number.organizationId,
+            platform: 'leadconnector',
+            installationId,
+            isDefault: true,
+          },
+          data: { isDefault: false },
+        });
+      }
+
+      const existing = await prisma.senderProfile.findFirst({
+        where: {
+          organizationId: number.organizationId,
+          platform: 'leadconnector',
+          installationId,
+          phoneNumberId: number.id,
+        },
+      });
+
+      if (existing) {
+        await prisma.senderProfile.update({
+          where: { id: existing.id },
+          data: {
+            senderKey: number.phoneNumber,
+            senderLabel: number.friendlyName ?? number.formattedNumber,
+            isDefault: makeDefault ? true : existing.isDefault,
+            metadata: {
+              signalmashNumberId: number.signalmashNumberId,
+              campaignId: number.campaignId,
+              linkedExisting: true,
+            },
+          },
+        });
+        continue;
+      }
+
+      const existingDefault = await prisma.senderProfile.findFirst({
+        where: {
+          organizationId: number.organizationId,
+          platform: 'leadconnector',
+          installationId,
+          isDefault: true,
+        },
+      });
+
+      await prisma.senderProfile.create({
+        data: {
+          organizationId: number.organizationId,
+          installationId,
+          phoneNumberId: number.id,
+          platform: 'leadconnector',
+          senderKey: number.phoneNumber,
+          senderLabel: number.friendlyName ?? number.formattedNumber,
+          isDefault: makeDefault || !existingDefault,
+          metadata: {
+            signalmashNumberId: number.signalmashNumberId,
+            campaignId: number.campaignId,
+            linkedExisting: true,
+          },
+        },
+      });
+    }
+  }
+
   private formatPhoneNumber(phoneNumber: string): string {
     const cleaned = phoneNumber.replace(/\D/g, '');
     if (cleaned.length === 11 && cleaned.startsWith('1')) {
@@ -409,6 +850,35 @@ export class PhoneNumberService {
       return `+1 (${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`;
     }
     return phoneNumber;
+  }
+
+  private extractAreaCode(phoneNumber: string): string {
+    const cleaned = phoneNumber.replace(/\D/g, "");
+    if (cleaned.length === 11 && cleaned.startsWith("1")) {
+      return cleaned.slice(1, 4);
+    }
+    if (cleaned.length >= 10) {
+      return cleaned.slice(0, 3);
+    }
+    return cleaned.slice(0, 3);
+  }
+
+  private mapProviderNumberStatus(status: string | null | undefined): PhoneNumberStatus {
+    const normalized = status?.toLowerCase();
+
+    if (normalized === 'active' || normalized === 'enabled' || normalized === 'provisioned') {
+      return 'active';
+    }
+
+    if (normalized === 'suspended' || normalized === 'disabled') {
+      return 'suspended';
+    }
+
+    if (normalized === 'released' || normalized === 'deleted') {
+      return 'released';
+    }
+
+    return 'pending';
   }
 }
 

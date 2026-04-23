@@ -37,6 +37,13 @@ export function formatPhone(phone: string): string {
 // Alias for formatPhone
 export const formatPhoneNumber = formatPhone;
 
+export function normalizePhoneNumber(phone: string): string {
+  return phone
+    .trim()
+    .replace(/[\s\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/[().-]/g, '');
+}
+
 export function formatNumber(num: number): string {
   return new Intl.NumberFormat('en-US').format(num);
 }

@@ -16,8 +16,36 @@ import { redis } from './config/redis.js';
 import { logger } from './utils/logger.js';
 import { apiRoutes } from './routes/index.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { startOutboundMessageWorker, stopOutboundMessageWorker } from './queues/outbound-message.queue.js';
+import { startIncomingEventsWorker, stopIncomingEventsWorker } from './queues/incoming-events.queue.js';
 
 const app: Express = express();
+
+function buildAllowedOrigins(): Array<string | RegExp> {
+  const origins = new Set<string>();
+
+  origins.add(config.webUrl);
+
+  try {
+    const webUrl = new URL(config.webUrl);
+    const host = webUrl.hostname;
+
+    if (host.startsWith('www.')) {
+      const bareHost = host.slice(4);
+      origins.add(`${webUrl.protocol}//${bareHost}`);
+    } else {
+      origins.add(`${webUrl.protocol}//www.${host}`);
+    }
+  } catch {
+    // Keep the configured URL only if parsing fails.
+  }
+
+  return [
+    ...origins,
+    /\.gohighlevel\.com$/,
+    /\.leadconnectorhq\.com$/,
+  ];
+}
 
 // Trust proxy (for rate limiting behind reverse proxy)
 app.set('trust proxy', 1);
@@ -41,18 +69,19 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: [
-    config.webUrl,
-    /\.gohighlevel\.com$/,
-    /\.leadconnectorhq\.com$/,
-  ],
+  origin: buildAllowedOrigins(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
 // Request parsing
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, _res, buf) => {
+    (req as express.Request).rawBody = buf.toString('utf8');
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -70,6 +99,10 @@ const limiter = rateLimit({
   max: 100, // 100 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => (
+    req.path === '/auth/refresh' ||
+    req.path === '/platforms/leadconnector/sso/exchange'
+  ),
   message: {
     success: false,
     error: {
@@ -92,6 +125,12 @@ app.use(errorHandler);
 const gracefulShutdown = async (signal: string) => {
   logger.info(`${signal} received. Starting graceful shutdown...`);
 
+  await stopOutboundMessageWorker();
+  logger.info('Outbound message worker closed');
+
+  await stopIncomingEventsWorker();
+  logger.info('Incoming events worker closed');
+
   // Close database connection
   await prisma.$disconnect();
   logger.info('Database connection closed');
@@ -110,6 +149,8 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 const PORT = config.port;
 
 app.listen(PORT, () => {
+  startOutboundMessageWorker();
+  startIncomingEventsWorker();
   logger.info(`🚀 Signalmash Connect API running on port ${PORT}`);
   logger.info(`📚 Environment: ${config.nodeEnv}`);
   logger.info(`🌐 API URL: ${config.apiUrl}`);

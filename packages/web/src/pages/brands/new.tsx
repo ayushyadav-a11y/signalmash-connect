@@ -3,70 +3,223 @@ import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Building2,
-  User,
-  MapPin,
-  FileText,
-  ArrowRight,
   ArrowLeft,
-  Check,
+  ArrowRight,
   AlertCircle,
+  Building2,
+  CheckCircle2,
+  Globe,
+  Landmark,
+  Mail,
+  MapPin,
+  Phone,
+  Users,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
+import { notify } from '@/stores/notification.store';
 
-const brandSchema = z.object({
-  // Step 1: Business Information
-  legalName: z.string().min(1, 'Legal business name is required'),
-  dba: z.string().optional(),
-  ein: z.string().regex(/^\d{2}-?\d{7}$/, 'Invalid EIN format (XX-XXXXXXX)'),
-  vertical: z.string().min(1, 'Business vertical is required'),
+const legalForms = [
+  { value: 'publicly_traded_company', label: 'Publicly Traded Company' },
+  { value: 'private_company', label: 'Private Company' },
+  { value: 'non_profit_organization', label: 'Non-Profit Organization' },
+  { value: 'government', label: 'Government' },
+  { value: 'sole_proprietor', label: 'Sole Proprietor' },
+  { value: 'platform_free_trial', label: 'Platform Free Trial' },
+] as const;
 
-  // Step 2: Contact Information
-  contactFirstName: z.string().min(1, 'First name is required'),
-  contactLastName: z.string().min(1, 'Last name is required'),
-  contactEmail: z.string().email('Valid email is required'),
-  contactPhone: z.string().min(10, 'Valid phone number is required'),
-
-  // Step 3: Address
-  street: z.string().min(1, 'Street address is required'),
-  city: z.string().min(1, 'City is required'),
-  state: z.string().min(2, 'State is required'),
-  postalCode: z.string().min(5, 'Postal code is required'),
-  country: z.string().default('US'),
-
-  // Step 4: Brand Details
-  website: z.string().url('Valid URL is required').optional().or(z.literal('')),
-  description: z.string().min(20, 'Description must be at least 20 characters'),
-});
-
-type BrandForm = z.infer<typeof brandSchema>;
-
-const steps = [
-  { id: 1, title: 'Business Info', icon: Building2 },
-  { id: 2, title: 'Contact', icon: User },
-  { id: 3, title: 'Address', icon: MapPin },
-  { id: 4, title: 'Details', icon: FileText },
-];
-
-const verticals = [
+const verticalTypes = [
   { value: 'professional_services', label: 'Professional Services' },
   { value: 'real_estate', label: 'Real Estate' },
-  { value: 'healthcare', label: 'Healthcare' },
-  { value: 'financial_services', label: 'Financial Services' },
-  { value: 'retail', label: 'Retail' },
-  { value: 'food_beverage', label: 'Food & Beverage' },
-  { value: 'hospitality', label: 'Hospitality' },
-  { value: 'technology', label: 'Technology' },
+  { value: 'healthcare_and_life_sciences', label: 'Healthcare and Life Sciences' },
+  { value: 'hr_staffing_or_recruitment', label: 'HR, Staffing or Recruitment' },
+  { value: 'energy_and_utilities', label: 'Energy and Utilities' },
+  { value: 'entertainment', label: 'Entertainment' },
+  { value: 'retail_and_consumer_products', label: 'Retail and Consumer Products' },
+  { value: 'transportation_or_logistics', label: 'Transportation or Logistics' },
+  { value: 'agriculture', label: 'Agriculture' },
+  { value: 'insurance', label: 'Insurance' },
+  { value: 'postal_and_delivery', label: 'Postal and Delivery' },
   { value: 'education', label: 'Education' },
-  { value: 'nonprofit', label: 'Non-Profit' },
-  { value: 'other', label: 'Other' },
-];
+  { value: 'hospitality_and_travel', label: 'Hospitality and Travel' },
+  { value: 'financial_services', label: 'Financial Services' },
+  { value: 'political', label: 'Political' },
+  { value: 'gambling_and_lottery', label: 'Gambling and Lottery' },
+  { value: 'legal', label: 'Legal' },
+  { value: 'construction_materials_and_trade_services', label: 'Construction, Materials, and Trade Services' },
+  { value: 'non_profit_organization', label: 'Non-profit Organization' },
+  { value: 'manufacturing', label: 'Manufacturing' },
+  { value: 'government_services_and_agencies', label: 'Government Services and Agencies' },
+  { value: 'information_technology_services', label: 'Information Technology Services' },
+  { value: 'media_and_communication', label: 'Media and Communication' },
+] as const;
+
+const identifierTypes = [
+  { value: 'duns', label: 'DUNS' },
+  { value: 'giin', label: 'GIIN' },
+  { value: 'lei', label: 'LEI' },
+] as const;
+
+const brandRelationshipOptions = [
+  { value: 'BASIC_ACCOUNT', label: 'BASIC_ACCOUNT', description: 'No business history with the CSP' },
+  { value: 'SMALL_ACCOUNT', label: 'SMALL_ACCOUNT', description: 'Some business history with the CSP' },
+  { value: 'MEDIUM_ACCOUNT', label: 'MEDIUM_ACCOUNT', description: 'Good standing with the CSP and solid business history' },
+  { value: 'LARGE_ACCOUNT', label: 'LARGE_ACCOUNT', description: 'Dedicated account manager and highly trusted relationship' },
+  { value: 'KEY_ACCOUNT', label: 'KEY_ACCOUNT', description: 'Strategic value with a dedicated account team' },
+] as const;
+
+type CountryOption = {
+  value: string;
+  label: string;
+};
+
+const fallbackCountryCodes = [
+  'US', 'CA', 'GB', 'AU', 'NZ', 'IE', 'DE', 'FR', 'ES', 'IT', 'NL', 'BE', 'LU', 'CH', 'AT',
+  'SE', 'NO', 'DK', 'FI', 'IS', 'PT', 'PL', 'CZ', 'SK', 'HU', 'RO', 'BG', 'GR', 'CY', 'MT',
+  'EE', 'LV', 'LT', 'SI', 'HR', 'JP', 'SG', 'IN', 'AE', 'SA', 'QA', 'KW', 'BH', 'OM', 'IL',
+  'ZA', 'NG', 'KE', 'EG', 'MA', 'MX', 'BR', 'AR', 'CL', 'CO', 'PE', 'UY', 'CR', 'PA', 'DO',
+  'GT', 'SV', 'HN', 'NI', 'BZ', 'JM', 'TT', 'KR', 'HK', 'TW', 'MY', 'TH', 'PH', 'ID', 'VN',
+  'PK', 'BD', 'LK', 'NP',
+] as const;
+
+const countryNameFormatter =
+  typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function'
+    ? new Intl.DisplayNames(['en'], { type: 'region' })
+    : null;
+
+const countryCodes = [...fallbackCountryCodes];
+
+const countries: CountryOption[] = countryCodes
+  .map((code: string) => ({
+    value: code,
+    label: countryNameFormatter?.of(code) ?? code,
+  }))
+  .sort((a: CountryOption, b: CountryOption) => a.label.localeCompare(b.label));
+
+const formSchema = z.object({
+  legalCompanyName: z.string().min(1, 'Legal company name is required'),
+  dbaBrandName: z.string().optional(),
+  legalForm: z.enum(legalForms.map((item) => item.value) as [string, ...string[]]),
+  registrationCountry: z.string().min(2, 'Country of registration is required'),
+  taxNumber: z.string().min(1, 'Tax Number/ID/EIN is required'),
+  taxIssuingCountry: z.string().optional(),
+  businessIdentifierType: z.enum(identifierTypes.map((item) => item.value) as [string, ...string[]]).optional(),
+  businessIdentifierValue: z.string().optional(),
+  streetAddress1: z.string().min(1, 'Address/Street is required'),
+  streetAddress2: z.string().optional(),
+  city: z.string().min(1, 'City is required'),
+  state: z.string().min(2, 'State is required').max(100),
+  postalCode: z.string().min(1, 'Zip Code is required'),
+  country: z.string().min(2, 'Country is required'),
+  website: z.string().url('Valid website URL is required'),
+  verticalType: z.enum(verticalTypes.map((item) => item.value) as [string, ...string[]]),
+  referenceId: z.string().optional(),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  mobilePhone: z.string().optional(),
+  email: z.union([z.string().email('Valid email is required'), z.literal('')]).optional(),
+  brandRelationship: z.enum(brandRelationshipOptions.map((item) => item.value) as [string, ...string[]]),
+  supportEmail: z.string().email('Valid support email is required'),
+  supportPhone: z.string().min(1, 'Support phone is required'),
+  businessEmailAddress: z.string().email('Valid business email address is required'),
+}).superRefine((data, ctx) => {
+  if (data.businessIdentifierValue?.trim() && !data.businessIdentifierType) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['businessIdentifierType'],
+      message: 'Select DUNS, GIIN, or LEI before entering the identifier number',
+    });
+  }
+});
+
+type BrandForm = z.infer<typeof formSchema>;
+
+const steps = [
+  {
+    id: 1,
+    title: 'Brand Details',
+    description: 'Capture the organization profile, tax identity, address, and classification details.',
+    icon: Building2,
+    fields: [
+      'legalCompanyName',
+      'legalForm',
+      'registrationCountry',
+      'taxNumber',
+      'streetAddress1',
+      'city',
+      'state',
+      'postalCode',
+      'country',
+      'website',
+      'verticalType',
+    ] as (keyof BrandForm)[],
+  },
+  {
+    id: 2,
+    title: 'Brand Relationship',
+    description: 'Capture the current trust tier and relationship history with the CSP.',
+    icon: Users,
+    fields: ['brandRelationship'] as (keyof BrandForm)[],
+  },
+  {
+    id: 3,
+    title: 'Contact Details',
+    description: 'Provide the operational and support contact details required for the brand record.',
+    icon: Landmark,
+    fields: ['supportEmail', 'supportPhone', 'businessEmailAddress'] as (keyof BrandForm)[],
+  },
+] as const;
+
+const legalFormToProviderEntityType: Record<BrandForm['legalForm'], 'PRIVATE_PROFIT' | 'PUBLIC_PROFIT' | 'NON_PROFIT' | 'GOVERNMENT' | 'SOLE_PROPRIETOR' | 'LLC'> = {
+  publicly_traded_company: 'PUBLIC_PROFIT',
+  private_company: 'PRIVATE_PROFIT',
+  non_profit_organization: 'NON_PROFIT',
+  government: 'GOVERNMENT',
+  sole_proprietor: 'SOLE_PROPRIETOR',
+  platform_free_trial: 'PRIVATE_PROFIT',
+};
+
+const verticalTypeToProvider: Record<BrandForm['verticalType'], 'RETAIL' | 'HEALTHCARE' | 'FINANCIAL' | 'EDUCATION' | 'HOSPITALITY' | 'REAL_ESTATE' | 'TECHNOLOGY' | 'PROFESSIONAL_SERVICES' | 'OTHER'> = {
+  professional_services: 'PROFESSIONAL_SERVICES',
+  real_estate: 'REAL_ESTATE',
+  healthcare_and_life_sciences: 'HEALTHCARE',
+  hr_staffing_or_recruitment: 'OTHER',
+  energy_and_utilities: 'OTHER',
+  entertainment: 'OTHER',
+  retail_and_consumer_products: 'RETAIL',
+  transportation_or_logistics: 'OTHER',
+  agriculture: 'OTHER',
+  insurance: 'OTHER',
+  postal_and_delivery: 'OTHER',
+  education: 'EDUCATION',
+  hospitality_and_travel: 'HOSPITALITY',
+  financial_services: 'FINANCIAL',
+  political: 'OTHER',
+  gambling_and_lottery: 'OTHER',
+  legal: 'PROFESSIONAL_SERVICES',
+  construction_materials_and_trade_services: 'OTHER',
+  non_profit_organization: 'OTHER',
+  manufacturing: 'OTHER',
+  government_services_and_agencies: 'OTHER',
+  information_technology_services: 'TECHNOLOGY',
+  media_and_communication: 'OTHER',
+};
+
+const selectClassName =
+  'h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-950 shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50';
+
+function requiredLabel(label: string) {
+  return (
+    <>
+      {label} <span className="text-red-500">*</span>
+    </>
+  );
+}
 
 export function NewBrandPage() {
   const navigate = useNavigate();
@@ -80,38 +233,21 @@ export function NewBrandPage() {
     trigger,
     formState: { errors },
   } = useForm<BrandForm>({
-    resolver: zodResolver(brandSchema),
+    resolver: zodResolver(formSchema),
     defaultValues: {
       country: 'US',
+      registrationCountry: 'US',
+      taxIssuingCountry: 'US',
+      legalForm: 'private_company',
+      verticalType: 'professional_services',
+      businessIdentifierType: 'duns',
+      email: '',
+      brandRelationship: 'BASIC_ACCOUNT',
+      supportEmail: '',
+      supportPhone: '',
+      businessEmailAddress: '',
     },
   });
-
-  const getStepFields = (step: number): (keyof BrandForm)[] => {
-    switch (step) {
-      case 1:
-        return ['legalName', 'dba', 'ein', 'vertical'];
-      case 2:
-        return ['contactFirstName', 'contactLastName', 'contactEmail', 'contactPhone'];
-      case 3:
-        return ['street', 'city', 'state', 'postalCode', 'country'];
-      case 4:
-        return ['website', 'description'];
-      default:
-        return [];
-    }
-  };
-
-  const handleNext = async () => {
-    const fields = getStepFields(currentStep);
-    const isValid = await trigger(fields);
-    if (isValid) {
-      setCurrentStep((prev) => Math.min(prev + 1, 4));
-    }
-  };
-
-  const handleBack = () => {
-    setCurrentStep((prev) => Math.max(prev - 1, 1));
-  };
 
   const onSubmit = async (data: BrandForm) => {
     setIsSubmitting(true);
@@ -119,361 +255,415 @@ export function NewBrandPage() {
 
     try {
       const response = await api.createBrand({
-        legalName: data.legalName,
-        dba: data.dba || undefined,
-        ein: data.ein.replace('-', ''),
-        vertical: data.vertical,
-        contactFirstName: data.contactFirstName,
-        contactLastName: data.contactLastName,
-        contactEmail: data.contactEmail,
-        contactPhone: data.contactPhone,
-        address: {
-          street: data.street,
-          city: data.city,
-          state: data.state,
-          postalCode: data.postalCode,
-          country: data.country,
-        },
-        website: data.website || undefined,
-        description: data.description,
+        entityType: legalFormToProviderEntityType[data.legalForm],
+        firstName: data.firstName?.trim() || undefined,
+        lastName: data.lastName?.trim() || undefined,
+        displayName: data.dbaBrandName?.trim() || data.legalCompanyName,
+        companyName: data.legalCompanyName,
+        ein: data.taxNumber.replace(/\D/g, '') || undefined,
+        einIssuingCountry: data.taxIssuingCountry || data.registrationCountry,
+        phone: data.supportPhone.replace(/\D/g, ''),
+        street: [data.streetAddress1, data.streetAddress2].filter(Boolean).join(', '),
+        city: data.city,
+        state: data.state.trim().toUpperCase(),
+        postalCode: data.postalCode,
+        country: data.country,
+        email: data.supportEmail.trim(),
+        stockSymbol: 'NONE',
+        stockExchange: 'NONE',
+        ipAddress: '',
+        brandRelationship: data.brandRelationship,
+        website: data.website.trim(),
+        vertical: verticalTypeToProvider[data.verticalType],
+        altBusinessId: data.businessIdentifierValue?.trim() || 'NONE',
+        altBusinessIdType: data.businessIdentifierType?.toUpperCase() || 'NONE',
+        referenceId: data.referenceId?.trim() || 'NONE',
+        tag: [],
+        mobilePhone: data.mobilePhone?.trim() || 'NONE',
+        businessContactEmail: data.businessEmailAddress.trim(),
       });
 
       if (response.success && response.data) {
+        notify.success('Brand created', 'Your brand draft was created successfully.');
         navigate(`/brands/${response.data.id}`);
-      } else {
-        setSubmitError(response.error?.message || 'Failed to create brand');
+        return;
       }
+
+      setSubmitError(response.error?.message || 'Failed to create brand');
     } catch (error) {
-      setSubmitError('An unexpected error occurred');
+      console.error('Failed to create brand:', error);
+      notify.error('Unable to create brand', 'Check the entered details and try again.');
+      setSubmitError('An unexpected error occurred while creating the brand.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const handleNext = async () => {
+    const step = steps[currentStep - 1];
+    const isValid = step.fields.length === 0 ? true : await trigger(step.fields);
+    if (isValid) {
+      setCurrentStep((value) => Math.min(value + 1, steps.length));
+    }
+  };
+
+  const currentStepConfig = steps[currentStep - 1];
+
   return (
     <div>
       <Header
         title="Register Brand"
-        subtitle="Register your business for 10DLC messaging"
+        subtitle="Capture the new brand wizard fields while keeping draft creation aligned with the current backend."
       />
 
-      <div className="p-6 max-w-3xl mx-auto">
-        {/* Progress Steps */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            {steps.map((step, index) => {
-              const isActive = currentStep === step.id;
-              const isCompleted = currentStep > step.id;
-              const StepIcon = step.icon;
+      <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
+        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl space-y-2">
+              <Badge variant="outline" className="w-fit border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                Brand Registration Wizard
+              </Badge>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+                Structured intake for brand onboarding
+              </h2>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+                The brand intake wizard now captures company details, relationship tier, and final contact details
+                ahead of the backend payload alignment pass.
+              </p>
+            </div>
 
-              return (
-                <div key={step.id} className="flex items-center">
-                  <div className="flex flex-col items-center">
-                    <motion.div
-                      className={`
-                        flex items-center justify-center w-12 h-12 rounded-xl border-2 transition-all duration-300
-                        ${isCompleted ? 'bg-green-500 border-green-500' : ''}
-                        ${isActive ? 'bg-blue-500 border-blue-500' : ''}
-                        ${!isActive && !isCompleted ? 'bg-transparent border-gray-300 dark:border-gray-600' : ''}
-                      `}
-                      animate={{ scale: isActive ? 1.1 : 1 }}
-                    >
-                      {isCompleted ? (
-                        <Check className="h-5 w-5 text-white" />
-                      ) : (
-                        <StepIcon
-                          className={`h-5 w-5 ${
-                            isActive ? 'text-white' : 'text-muted-foreground'
-                          }`}
-                        />
-                      )}
-                    </motion.div>
-                    <span
-                      className={`mt-2 text-sm font-medium ${
-                        isActive || isCompleted
-                          ? 'text-foreground'
-                          : 'text-muted-foreground'
-                      }`}
-                    >
-                      {step.title}
-                    </span>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {steps.map((step) => {
+                const Icon = step.icon;
+                const isActive = currentStep === step.id;
+                const isComplete = currentStep > step.id;
+
+                return (
+                  <div
+                    key={step.id}
+                    className={`rounded-2xl border px-4 py-4 ${
+                      isActive
+                        ? 'border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-950'
+                        : isComplete
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'
+                          : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="inline-flex rounded-xl bg-white/10 p-2 dark:bg-black/10">
+                        {isComplete ? <CheckCircle2 className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold">{step.title}</p>
+                        <p className="text-xs opacity-80">Step {step.id}</p>
+                      </div>
+                    </div>
                   </div>
-                  {index < steps.length - 1 && (
-                    <div
-                      className={`flex-1 h-0.5 mx-4 mt-[-1.5rem] ${
-                        currentStep > step.id
-                          ? 'bg-green-500'
-                          : 'bg-gray-200 dark:bg-gray-700'
-                      }`}
-                    />
-                  )}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </section>
 
-        {/* Form Card */}
-        <Card variant="glass" className="shadow-xl">
-          <CardHeader>
-            <CardTitle>{steps[currentStep - 1].title}</CardTitle>
-            <CardDescription>
-              {currentStep === 1 && 'Enter your business registration details'}
-              {currentStep === 2 && 'Provide authorized contact information'}
-              {currentStep === 3 && 'Enter your business address'}
-              {currentStep === 4 && 'Additional brand details for registration'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)}>
-              {submitError && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="mb-6 p-4 rounded-xl bg-destructive/10 text-destructive flex items-center gap-2"
-                >
-                  <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                  {submitError}
-                </motion.div>
+        <Card className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <CardContent className="p-6 sm:p-8">
+            <div className="mb-8 max-w-2xl">
+              <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">
+                {currentStepConfig.title}
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                {currentStepConfig.description}
+              </p>
+            </div>
+
+            {submitError && (
+              <div className="mb-6 flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                <span>{submitError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+              {currentStep === 1 && (
+                <div className="space-y-8">
+                  <section className="space-y-5">
+                    <div>
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Company Identity</h4>
+                    </div>
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Legal Company Name')}</label>
+                        <Input {...register('legalCompanyName')} error={errors.legalCompanyName?.message} placeholder="Acme Holdings LLC" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">DBA Brand Name, if different from legal name</label>
+                        <Input {...register('dbaBrandName')} error={errors.dbaBrandName?.message} placeholder="Acme Health" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('What type of legal form is the organization')}</label>
+                        <select {...register('legalForm')} className={selectClassName}>
+                          {legalForms.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        {errors.legalForm && <p className="text-sm text-red-600 dark:text-red-300">{errors.legalForm.message}</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Country of registration')}</label>
+                        <select {...register('registrationCountry')} className={selectClassName}>
+                          {countries.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label} ({option.value})
+                            </option>
+                          ))}
+                        </select>
+                        {errors.registrationCountry && <p className="text-sm text-red-600 dark:text-red-300">{errors.registrationCountry.message}</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Tax Number/ID/EIN')}</label>
+                        <Input {...register('taxNumber')} error={errors.taxNumber?.message} placeholder="12-3456789" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Tax Number/ID/EIN Issuing Country</label>
+                        <select {...register('taxIssuingCountry')} className={selectClassName}>
+                          {countries.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label} ({option.value})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">DUNS or GIIN or LEI Number Type</label>
+                        <select {...register('businessIdentifierType')} className={selectClassName}>
+                          {identifierTypes.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        {errors.businessIdentifierType && (
+                          <p className="text-sm text-red-600 dark:text-red-300">{errors.businessIdentifierType.message}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">DUNS or GIIN or LEI Number</label>
+                        <Input {...register('businessIdentifierValue')} error={errors.businessIdentifierValue?.message} placeholder="Identifier number" />
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="space-y-5 border-t border-slate-200 pt-8 dark:border-slate-800">
+                    <div>
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Address And Classification</h4>
+                    </div>
+                    <div className="grid gap-5 md:grid-cols-2">
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Address/Street')}</label>
+                        <Input
+                          {...register('streetAddress1')}
+                          error={errors.streetAddress1?.message}
+                          placeholder="100 Mission Street"
+                          leftIcon={<MapPin className="h-4 w-4" />}
+                        />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Address/Street</label>
+                        <Input
+                          {...register('streetAddress2')}
+                          error={errors.streetAddress2?.message}
+                          placeholder="Suite 400"
+                          leftIcon={<MapPin className="h-4 w-4" />}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('City')}</label>
+                        <Input {...register('city')} error={errors.city?.message} placeholder="San Francisco" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('State')}</label>
+                        <Input {...register('state')} error={errors.state?.message} placeholder="CA" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Zip Code')}</label>
+                        <Input {...register('postalCode')} error={errors.postalCode?.message} placeholder="94105" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Country')}</label>
+                        <select {...register('country')} className={selectClassName}>
+                          {countries.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label} ({option.value})
+                            </option>
+                          ))}
+                        </select>
+                        {errors.country && <p className="text-sm text-red-600 dark:text-red-300">{errors.country.message}</p>}
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Website/Online Presence')}</label>
+                        <Input
+                          {...register('website')}
+                          error={errors.website?.message}
+                          placeholder="https://www.acmehealth.com"
+                          leftIcon={<Globe className="h-4 w-4" />}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Vertical Type')}</label>
+                        <select {...register('verticalType')} className={selectClassName}>
+                          {verticalTypes.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        {errors.verticalType && <p className="text-sm text-red-600 dark:text-red-300">{errors.verticalType.message}</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Reference ID</label>
+                        <Input {...register('referenceId')} error={errors.referenceId?.message} placeholder="Optional internal reference" />
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="space-y-5 border-t border-slate-200 pt-8 dark:border-slate-800">
+                    <div>
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Primary Contact Snapshot</h4>
+                    </div>
+                    <div className="grid gap-5 md:grid-cols-3">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">First Name</label>
+                        <Input {...register('firstName')} error={errors.firstName?.message} placeholder="Jane" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Last Name</label>
+                        <Input {...register('lastName')} error={errors.lastName?.message} placeholder="Doe" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Mobile Phone</label>
+                        <Input
+                          {...register('mobilePhone')}
+                          error={errors.mobilePhone?.message}
+                          placeholder="+1 415 555 0148"
+                          leftIcon={<Phone className="h-4 w-4" />}
+                        />
+                      </div>
+                    </div>
+                  </section>
+                </div>
               )}
 
-              <AnimatePresence mode="wait">
-                {/* Step 1: Business Information */}
-                {currentStep === 1 && (
-                  <motion.div
-                    key="step1"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="space-y-4"
-                  >
+              {currentStep === 2 && (
+                <div className="space-y-6">
+                  <section className="space-y-5">
+                    <div>
+                      <h4 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">Relationship Tier</h4>
+                    </div>
+
+                    <div className="space-y-3">
+                      {brandRelationshipOptions.map((option) => (
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-start gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 transition hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-950"
+                        >
+                          <input
+                            type="radio"
+                            value={option.value}
+                            {...register('brandRelationship')}
+                            className="mt-1 h-4 w-4 border-slate-300 text-primary focus:ring-primary"
+                          />
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold text-slate-950 dark:text-slate-50">{option.label}</p>
+                            <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">{option.description}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    {errors.brandRelationship && (
+                      <p className="text-sm text-red-600 dark:text-red-300">{errors.brandRelationship.message}</p>
+                    )}
+                  </section>
+                </div>
+              )}
+
+              {currentStep === 3 && (
+                <div className="space-y-6">
+                  <div className="grid gap-5 md:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Legal Business Name *</label>
+                      <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Support Email')}</label>
                       <Input
-                        {...register('legalName')}
-                        placeholder="Acme Corporation Inc."
-                        error={errors.legalName?.message}
-                        leftIcon={<Building2 className="h-4 w-4" />}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">DBA (Doing Business As)</label>
-                      <Input
-                        {...register('dba')}
-                        placeholder="Acme Inc."
-                        error={errors.dba?.message}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">EIN (Tax ID) *</label>
-                      <Input
-                        {...register('ein')}
-                        placeholder="XX-XXXXXXX"
-                        error={errors.ein?.message}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Business Vertical *</label>
-                      <select
-                        {...register('vertical')}
-                        className="w-full h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                      >
-                        <option value="">Select a vertical</option>
-                        {verticals.map((v) => (
-                          <option key={v.value} value={v.value}>
-                            {v.label}
-                          </option>
-                        ))}
-                      </select>
-                      {errors.vertical && (
-                        <p className="text-sm text-destructive">{errors.vertical.message}</p>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* Step 2: Contact Information */}
-                {currentStep === 2 && (
-                  <motion.div
-                    key="step2"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="space-y-4"
-                  >
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">First Name *</label>
-                        <Input
-                          {...register('contactFirstName')}
-                          placeholder="John"
-                          error={errors.contactFirstName?.message}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Last Name *</label>
-                        <Input
-                          {...register('contactLastName')}
-                          placeholder="Doe"
-                          error={errors.contactLastName?.message}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Email *</label>
-                      <Input
-                        {...register('contactEmail')}
+                        {...register('supportEmail')}
                         type="email"
-                        placeholder="john@acme.com"
-                        error={errors.contactEmail?.message}
+                        error={errors.supportEmail?.message}
+                        placeholder="support@acmehealth.com"
+                        leftIcon={<Mail className="h-4 w-4" />}
                       />
                     </div>
-
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Phone *</label>
+                      <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Support Phone')}</label>
                       <Input
-                        {...register('contactPhone')}
-                        placeholder="+1 (555) 123-4567"
-                        error={errors.contactPhone?.message}
+                        {...register('supportPhone')}
+                        error={errors.supportPhone?.message}
+                        placeholder="+1 415 555 0199"
+                        leftIcon={<Phone className="h-4 w-4" />}
                       />
                     </div>
-                  </motion.div>
-                )}
-
-                {/* Step 3: Address */}
-                {currentStep === 3 && (
-                  <motion.div
-                    key="step3"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="space-y-4"
-                  >
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Street Address *</label>
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-sm font-medium text-slate-700 dark:text-slate-300">{requiredLabel('Business Email Address')}</label>
                       <Input
-                        {...register('street')}
-                        placeholder="123 Main Street, Suite 100"
-                        error={errors.street?.message}
-                        leftIcon={<MapPin className="h-4 w-4" />}
+                        {...register('businessEmailAddress')}
+                        type="email"
+                        error={errors.businessEmailAddress?.message}
+                        placeholder="operations@acmehealth.com"
+                        leftIcon={<Mail className="h-4 w-4" />}
                       />
                     </div>
+                  </div>
+                </div>
+              )}
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">City *</label>
-                        <Input
-                          {...register('city')}
-                          placeholder="San Francisco"
-                          error={errors.city?.message}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">State *</label>
-                        <Input
-                          {...register('state')}
-                          placeholder="CA"
-                          error={errors.state?.message}
-                        />
-                      </div>
-                    </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900">
+                <h4 className="text-sm font-semibold text-slate-950 dark:text-slate-50">Before you continue</h4>
+                <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                  <li>Required labels now follow your asterisk rules in the Brand Details step.</li>
+                  <li>Brand Relationship now captures the CSP trust tier you specified.</li>
+                  <li>Contact Details now captures support email, support phone, and business email address.</li>
+                  <li>Country of registration, tax issuing country, and country all support the full ISO region list.</li>
+                  <li>The backend still stores a reduced brand schema, so several new fields are currently collected only at the UI layer.</li>
+                </ul>
+              </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Postal Code *</label>
-                        <Input
-                          {...register('postalCode')}
-                          placeholder="94105"
-                          error={errors.postalCode?.message}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">Country</label>
-                        <Input
-                          {...register('country')}
-                          placeholder="US"
-                          error={errors.country?.message}
-                          disabled
-                        />
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
+              {currentStep === steps.length && (
+                <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 dark:border-sky-500/30 dark:bg-sky-500/10">
+                  <h4 className="text-sm font-semibold text-sky-950 dark:text-sky-100">What happens next</h4>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-sky-900/80 dark:text-sky-100/80">
+                    <li>This creates a brand draft using the current server contract.</li>
+                    <li>The new relationship and contact fields are now collected in the wizard and ready for backend payload mapping.</li>
+                    <li>Once you send the sample brand payload, the server and database schema can be aligned to persist all new fields.</li>
+                  </ul>
+                </div>
+              )}
 
-                {/* Step 4: Details */}
-                {currentStep === 4 && (
-                  <motion.div
-                    key="step4"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="space-y-4"
-                  >
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Website</label>
-                      <Input
-                        {...register('website')}
-                        placeholder="https://acme.com"
-                        error={errors.website?.message}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Business Description *</label>
-                      <textarea
-                        {...register('description')}
-                        placeholder="Describe your business and how you plan to use SMS messaging..."
-                        className="w-full min-h-[120px] px-4 py-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
-                      />
-                      {errors.description && (
-                        <p className="text-sm text-destructive">{errors.description.message}</p>
-                      )}
-                    </div>
-
-                    <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-                      <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
-                        Before you submit
-                      </h4>
-                      <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                        <li>• Ensure all information matches your official business registration</li>
-                        <li>• Brand verification typically takes 1-3 business days</li>
-                        <li>• You'll be notified via email once verification is complete</li>
-                      </ul>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Navigation Buttons */}
-              <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between border-t border-slate-200 pt-6 dark:border-slate-800">
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={currentStep === 1 ? () => navigate('/brands') : handleBack}
+                  onClick={currentStep === 1 ? () => navigate('/brands') : () => setCurrentStep((value) => Math.max(1, value - 1))}
                   leftIcon={<ArrowLeft className="h-4 w-4" />}
                 >
                   {currentStep === 1 ? 'Cancel' : 'Back'}
                 </Button>
 
-                {currentStep < 4 ? (
-                  <Button
-                    type="button"
-                    onClick={handleNext}
-                    rightIcon={<ArrowRight className="h-4 w-4" />}
-                  >
+                {currentStep < steps.length ? (
+                  <Button type="button" onClick={handleNext} rightIcon={<ArrowRight className="h-4 w-4" />}>
                     Continue
                   </Button>
                 ) : (
-                  <Button
-                    type="submit"
-                    isLoading={isSubmitting}
-                    rightIcon={<Check className="h-4 w-4" />}
-                  >
-                    Submit for Verification
+                  <Button type="submit" isLoading={isSubmitting} rightIcon={<CheckCircle2 className="h-4 w-4" />}>
+                    Create Brand Draft
                   </Button>
                 )}
               </div>

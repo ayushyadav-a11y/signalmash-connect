@@ -2,6 +2,8 @@
 // API Client
 // ===========================================
 
+import { safeGetItem, safeRemoveItem, safeSetItem } from './storage';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 interface ApiResponse<T> {
@@ -26,16 +28,15 @@ class ApiClient {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    // Try to restore token from localStorage
-    this.accessToken = localStorage.getItem('accessToken');
+    this.accessToken = safeGetItem('accessToken');
   }
 
   setAccessToken(token: string | null) {
     this.accessToken = token;
     if (token) {
-      localStorage.setItem('accessToken', token);
+      safeSetItem('accessToken', token);
     } else {
-      localStorage.removeItem('accessToken');
+      safeRemoveItem('accessToken');
     }
   }
 
@@ -48,7 +49,7 @@ class ApiClient {
    */
   setTokensFromOAuth(accessToken: string, refreshToken: string) {
     this.setAccessToken(accessToken);
-    localStorage.setItem('refreshToken', refreshToken);
+    safeSetItem('refreshToken', refreshToken);
   }
 
   /**
@@ -56,6 +57,15 @@ class ApiClient {
    */
   async initiateOAuth(platform: string) {
     return this.get<{ authUrl: string }>(`/platforms/${platform}/oauth`);
+  }
+
+  async exchangeGhlSso(encryptedData: string) {
+    return this.post<{
+      user: any;
+      organization: any;
+      tokens: { accessToken: string; refreshToken: string; expiresIn: number };
+      locationId: string;
+    }>('/platforms/leadconnector/sso/exchange', { encryptedData });
   }
 
   private async request<T>(
@@ -73,31 +83,41 @@ class ApiClient {
       headers['Authorization'] = `Bearer ${this.accessToken}`;
     }
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      });
+    } catch (error) {
+      throw new ApiError(
+        error instanceof Error ? error.message : 'Network request failed',
+        'NETWORK_ERROR',
+        0
+      );
+    }
 
-    const data = await response.json();
+    const responseText = await response.text();
+    const data = responseText ? JSON.parse(responseText) : {};
 
     if (!response.ok) {
       // Handle 401 - token expired
       if (response.status === 401) {
         // Try to refresh token
-        const refreshToken = localStorage.getItem('refreshToken');
+        const refreshToken = safeGetItem('refreshToken');
         if (refreshToken) {
           try {
             const refreshResponse = await this.refreshToken(refreshToken);
             if (refreshResponse.success && refreshResponse.data) {
               this.setAccessToken(refreshResponse.data.accessToken);
-              localStorage.setItem('refreshToken', refreshResponse.data.refreshToken);
+              safeSetItem('refreshToken', refreshResponse.data.refreshToken);
               // Retry original request
               return this.request<T>(endpoint, options);
             }
           } catch {
             // Refresh failed, clear tokens
             this.setAccessToken(null);
-            localStorage.removeItem('refreshToken');
+            safeRemoveItem('refreshToken');
           }
         }
       }
@@ -131,6 +151,13 @@ class ApiClient {
     });
   }
 
+  async patch<T>(endpoint: string, body?: unknown): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, {
+      method: 'PATCH',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
   async delete<T>(endpoint: string): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, { method: 'DELETE' });
   }
@@ -145,7 +172,7 @@ class ApiClient {
 
     if (response.success && response.data) {
       this.setAccessToken(response.data.tokens.accessToken);
-      localStorage.setItem('refreshToken', response.data.tokens.refreshToken);
+      safeSetItem('refreshToken', response.data.tokens.refreshToken);
     }
 
     return response;
@@ -166,7 +193,7 @@ class ApiClient {
 
     if (response.success && response.data) {
       this.setAccessToken(response.data.tokens.accessToken);
-      localStorage.setItem('refreshToken', response.data.tokens.refreshToken);
+      safeSetItem('refreshToken', response.data.tokens.refreshToken);
     }
 
     return response;
@@ -181,7 +208,7 @@ class ApiClient {
   }
 
   async logout() {
-    const refreshToken = localStorage.getItem('refreshToken');
+    const refreshToken = safeGetItem('refreshToken');
     if (refreshToken) {
       try {
         await this.post('/auth/logout', { refreshToken });
@@ -190,7 +217,7 @@ class ApiClient {
       }
     }
     this.setAccessToken(null);
-    localStorage.removeItem('refreshToken');
+    safeRemoveItem('refreshToken');
   }
 
   async getMe() {
@@ -287,19 +314,66 @@ class ApiClient {
 
   // Platform endpoints
   async getPlatformConnections() {
-    return this.get<any[]>('/platforms/connections');
+    return this.get<any[]>('/platforms');
   }
 
   async getOAuthUrl(platform: string) {
-    return this.get<{ url: string }>(`/platforms/${platform}/oauth`);
+    return this.get<{ authUrl: string }>(`/platforms/${platform}/oauth`);
   }
 
   async disconnectPlatform(id: string) {
-    return this.delete(`/platforms/connections/${id}`);
+    return this.delete(`/platforms/${id}`);
   }
 
-  async refreshPlatformToken(id: string) {
-    return this.post<any>(`/platforms/connections/${id}/refresh`);
+  async getPlatformReadiness(id: string) {
+    return this.get<any>(`/platforms/${id}/readiness`);
+  }
+
+  async activatePlatformProvider(id: string, source: 'manual_confirmation' | 'test_send' = 'manual_confirmation') {
+    return this.post<any>(`/platforms/${id}/activate-provider`, { source });
+  }
+
+  async getBillingSummary() {
+    return this.get<any>('/billing/summary');
+  }
+
+  async getBillingEvents() {
+    return this.get<any[]>('/billing/events');
+  }
+
+  async processBillingEvents(limit = 100) {
+    return this.post<any>('/billing/process', { limit });
+  }
+
+  async updateBillingEventStatus(
+    id: string,
+    data: { status: 'posted' | 'failed' | 'ignored'; reason?: string; metadata?: Record<string, unknown> }
+  ) {
+    return this.patch<any>(`/billing/events/${id}/status`, data);
+  }
+
+  async getOperationsSummary() {
+    return this.get<any>('/operations/summary');
+  }
+
+  async getDeadLetters() {
+    return this.get<any[]>('/operations/dead-letters');
+  }
+
+  async replayDeadLetter(id: string) {
+    return this.post<any>(`/operations/dead-letters/${id}/replay`);
+  }
+
+  async getPortOrders() {
+    return this.get<any[]>('/port-orders');
+  }
+
+  async createPortOrder(data: any) {
+    return this.post<any>('/port-orders', data);
+  }
+
+  async updatePortOrder(id: string, data: any) {
+    return this.patch<any>(`/port-orders/${id}`, data);
   }
 
   // Campaign actions
@@ -320,7 +394,7 @@ class ApiClient {
     return this.post<any>('/users/password', { currentPassword, newPassword });
   }
 
-  async updateOrganization(data: { name: string; email: string }) {
+  async updateOrganization(data: { name?: string; email?: string; phone?: string; website?: string; logoUrl?: string }) {
     return this.put<any>('/organization', data);
   }
 
@@ -338,10 +412,11 @@ class ApiClient {
   }
 
   // Phone Numbers (DIDs)
-  async searchAvailableNumbers(params?: { areaCode?: string; contains?: string; limit?: number }) {
+  async searchAvailableNumbers(params?: { areaCode?: string; contains?: string; state?: string; limit?: number }) {
     const searchParams = new URLSearchParams();
     if (params?.areaCode) searchParams.set('areaCode', params.areaCode);
     if (params?.contains) searchParams.set('contains', params.contains);
+    if (params?.state) searchParams.set('state', params.state);
     if (params?.limit) searchParams.set('limit', String(params.limit));
     const query = searchParams.toString();
     return this.get<any[]>(`/phone-numbers/available${query ? `?${query}` : ''}`);
@@ -370,7 +445,7 @@ class ApiClient {
   }
 
   async updatePhoneNumber(id: string, data: { friendlyName?: string; campaignId?: string | null }) {
-    return this.put<any>(`/phone-numbers/${id}`, data);
+    return this.patch<any>(`/phone-numbers/${id}`, data);
   }
 
   async releasePhoneNumber(id: string) {

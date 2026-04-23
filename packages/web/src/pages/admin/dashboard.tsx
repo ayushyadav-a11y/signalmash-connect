@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import {
   Building2,
   Users,
@@ -9,8 +8,9 @@ import {
   Award,
   Activity,
   Key,
+  ArrowRight,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { adminApi } from '@/stores/admin.store';
 import { AdminHeader } from '@/components/layout/admin-header';
 import { formatNumber } from '@/lib/utils';
@@ -30,121 +30,116 @@ export function AdminDashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const response = await adminApi.getDashboard();
+        if (response.success) {
+          setStats(response.data);
+        }
+      } catch (error) {
+        console.error('Failed to load stats:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     loadStats();
   }, []);
 
-  const loadStats = async () => {
-    try {
-      const response = await adminApi.getDashboard();
-      if (response.success) {
-        setStats(response.data);
-      }
-    } catch (error) {
-      console.error('Failed to load stats:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const statCards = [
-    { title: 'Organizations', value: stats?.totalOrganizations ?? 0, icon: Building2, color: 'from-blue-500 to-blue-600' },
-    { title: 'Users', value: stats?.totalUsers ?? 0, icon: Users, color: 'from-green-500 to-green-600' },
-    { title: 'Brands', value: stats?.totalBrands ?? 0, icon: Award, color: 'from-purple-500 to-purple-600' },
-    { title: 'Campaigns', value: stats?.totalCampaigns ?? 0, icon: Megaphone, color: 'from-orange-500 to-orange-600' },
-    { title: 'Total Messages', value: stats?.totalMessages ?? 0, icon: MessageSquare, color: 'from-cyan-500 to-cyan-600' },
-    { title: 'Messages (24h)', value: stats?.messagesLast24h ?? 0, icon: Activity, color: 'from-pink-500 to-pink-600' },
+    { title: 'Organizations', value: stats?.totalOrganizations ?? 0, icon: Building2 },
+    { title: 'Users', value: stats?.totalUsers ?? 0, icon: Users },
+    { title: 'Brands', value: stats?.totalBrands ?? 0, icon: Award },
+    { title: 'Campaigns', value: stats?.totalCampaigns ?? 0, icon: Megaphone },
+    { title: 'Total Messages', value: stats?.totalMessages ?? 0, icon: MessageSquare },
+    { title: 'Messages (24h)', value: stats?.messagesLast24h ?? 0, icon: Activity },
+  ];
+
+  const quickActions = [
+    {
+      title: 'Runtime Settings',
+      description: 'Manage Signalmash and GHL configuration stored in app settings.',
+      href: '/admin/settings',
+      icon: Key,
+    },
+    {
+      title: 'Organizations',
+      description: 'Review connected organizations, usage footprint, and growth across the platform.',
+      href: '/admin/organizations',
+      icon: Building2,
+    },
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
-      <AdminHeader title="Admin Portal" subtitle="SignalMash Connect" />
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-950">
+      <AdminHeader title="Admin Portal" subtitle="Platform administration and runtime controls" />
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-          {statCards.map((stat, index) => (
-            <motion.div
-              key={stat.title}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
+        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl space-y-2">
+              <p className="text-sm font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                Platform Overview
+              </p>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+                Administrative visibility across tenants and runtime activity
+              </h2>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+                The admin dashboard now matches the main product shell: clean surfaces, readable metrics,
+                and direct paths into configuration and tenant management.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {statCards.map((stat) => (
+            <Card key={stat.title} className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+              <CardContent className="p-6">
+                <div className="mb-5 flex items-start justify-between">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                    <stat.icon className="h-5 w-5 text-slate-700 dark:text-slate-200" />
+                  </div>
+                </div>
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{stat.title}</p>
+                <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+                  {isLoading ? (
+                    <span className="inline-block h-9 w-24 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+                  ) : (
+                    formatNumber(stat.value)
+                  )}
+                </p>
+              </CardContent>
+            </Card>
+          ))}
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {quickActions.map((action) => (
+            <Card
+              key={action.title}
+              className="cursor-pointer border-slate-200 bg-white shadow-sm transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-slate-700"
+              onClick={() => navigate(action.href)}
             >
-              <Card className="bg-gray-800/50 border-gray-700">
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
+              <CardContent className="p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-4">
+                    <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900">
+                      <action.icon className="h-5 w-5 text-slate-700 dark:text-slate-200" />
+                    </div>
                     <div>
-                      <p className="text-sm text-gray-400">{stat.title}</p>
-                      <p className="text-3xl font-bold text-white mt-1">
-                        {isLoading ? (
-                          <span className="inline-block w-16 h-8 bg-gray-700 animate-pulse rounded" />
-                        ) : (
-                          formatNumber(stat.value)
-                        )}
+                      <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">{action.title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                        {action.description}
                       </p>
                     </div>
-                    <div className={`p-3 rounded-xl bg-gradient-to-br ${stat.color}`}>
-                      <stat.icon className="h-6 w-6 text-white" />
-                    </div>
                   </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+                  <ArrowRight className="h-5 w-5 text-slate-400" />
+                </div>
+              </CardContent>
+            </Card>
           ))}
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-          >
-            <Card
-              className="bg-gray-800/50 border-gray-700 cursor-pointer hover:bg-gray-700/50 transition-colors"
-              onClick={() => navigate('/admin/settings')}
-            >
-              <CardHeader>
-                <CardTitle className="flex items-center gap-3 text-white">
-                  <div className="p-2 rounded-xl bg-gradient-to-br from-yellow-500 to-orange-600">
-                    <Key className="h-5 w-5 text-white" />
-                  </div>
-                  API Settings
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-400 text-sm">
-                  Configure Signalmash API key, GHL credentials, and other integration settings.
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.7 }}
-          >
-            <Card
-              className="bg-gray-800/50 border-gray-700 cursor-pointer hover:bg-gray-700/50 transition-colors"
-              onClick={() => navigate('/admin/organizations')}
-            >
-              <CardHeader>
-                <CardTitle className="flex items-center gap-3 text-white">
-                  <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600">
-                    <Building2 className="h-5 w-5 text-white" />
-                  </div>
-                  Organizations
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-gray-400 text-sm">
-                  View and manage all organizations using the platform.
-                </p>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </div>
+        </section>
       </main>
     </div>
   );

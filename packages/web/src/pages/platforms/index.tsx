@@ -2,94 +2,225 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   Plug,
-  Plus,
   CheckCircle,
   XCircle,
   Clock,
-  Settings,
   Trash2,
-  RefreshCw,
+  ArrowRight,
+  Building2,
+  ShieldCheck,
+  Link2,
+  Sparkles,
 } from 'lucide-react';
 import { Header } from '@/components/layout/header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/lib/api';
+import { formatDateTime } from '@/lib/utils';
 
 interface PlatformConnection {
   id: string;
-  platform: 'ghl' | 'shopify' | 'hubspot' | 'salesforce' | 'zoho';
+  platform: 'leadconnector' | 'shopify' | 'hubspot' | 'salesforce' | 'zoho';
   platformAccountId: string;
-  platformAccountName: string;
-  status: 'active' | 'inactive' | 'expired' | 'error';
+  platformAccountName: string | null;
+  status: 'connected' | 'disconnected' | 'error' | 'pending';
   lastSyncAt: string | null;
   createdAt: string;
+  installation: {
+    id: string;
+    lifecycleState:
+      | 'installed'
+      | 'business_details_needed'
+      | 'connection_pending'
+      | 'brand_pending'
+      | 'campaign_pending'
+      | 'campaign_approved'
+      | 'number_setup_required'
+      | 'port_in_progress'
+      | 'provider_not_activated'
+      | 'ready'
+      | 'error_attention_required';
+    connectedAt: string | null;
+    lastSyncAt: string | null;
+    providerActivation: {
+      activatedAt: string | null;
+      source: string | null;
+      isActivated: boolean;
+    };
+    resourceCounts: {
+      totalBrands: number;
+      pendingBrands: number;
+      rejectedBrands: number;
+      totalCampaigns: number;
+      pendingCampaigns: number;
+      rejectedCampaigns: number;
+      approvedCampaigns: number;
+      activeNumbers: number;
+      outboundMessages: number;
+      activePortOrders: number;
+    };
+    checklist: Array<{
+      key: string;
+      label: string;
+      complete: boolean;
+      helper: string;
+    }>;
+  } | null;
 }
 
 interface AvailablePlatform {
   id: string;
   name: string;
   description: string;
-  icon: string;
-  color: string;
   available: boolean;
+  statusNote: string;
 }
 
-const platformConfigs: Record<string, { name: string; color: string; bgColor: string }> = {
-  ghl: { name: 'GoHighLevel', color: 'text-blue-600', bgColor: 'bg-blue-100 dark:bg-blue-900/30' },
-  shopify: { name: 'Shopify', color: 'text-green-600', bgColor: 'bg-green-100 dark:bg-green-900/30' },
-  hubspot: { name: 'HubSpot', color: 'text-orange-600', bgColor: 'bg-orange-100 dark:bg-orange-900/30' },
-  salesforce: { name: 'Salesforce', color: 'text-cyan-600', bgColor: 'bg-cyan-100 dark:bg-cyan-900/30' },
-  zoho: { name: 'Zoho', color: 'text-red-600', bgColor: 'bg-red-100 dark:bg-red-900/30' },
+const platformConfigs: Record<
+  string,
+  {
+    name: string;
+    accent: string;
+    surface: string;
+    border: string;
+  }
+> = {
+  leadconnector: {
+    name: 'GoHighLevel',
+    accent: 'text-sky-700 dark:text-sky-300',
+    surface: 'bg-sky-100 dark:bg-sky-500/15',
+    border: 'border-sky-200 dark:border-sky-500/30',
+  },
+  shopify: {
+    name: 'Shopify',
+    accent: 'text-emerald-700 dark:text-emerald-300',
+    surface: 'bg-emerald-100 dark:bg-emerald-500/15',
+    border: 'border-emerald-200 dark:border-emerald-500/30',
+  },
+  hubspot: {
+    name: 'HubSpot',
+    accent: 'text-amber-700 dark:text-amber-300',
+    surface: 'bg-amber-100 dark:bg-amber-500/15',
+    border: 'border-amber-200 dark:border-amber-500/30',
+  },
+  salesforce: {
+    name: 'Salesforce',
+    accent: 'text-cyan-700 dark:text-cyan-300',
+    surface: 'bg-cyan-100 dark:bg-cyan-500/15',
+    border: 'border-cyan-200 dark:border-cyan-500/30',
+  },
+  zoho: {
+    name: 'Zoho',
+    accent: 'text-rose-700 dark:text-rose-300',
+    surface: 'bg-rose-100 dark:bg-rose-500/15',
+    border: 'border-rose-200 dark:border-rose-500/30',
+  },
 };
 
 const statusConfig = {
-  active: { label: 'Connected', icon: CheckCircle, variant: 'success' as const },
-  inactive: { label: 'Inactive', icon: Clock, variant: 'secondary' as const },
-  expired: { label: 'Expired', icon: XCircle, variant: 'warning' as const },
+  connected: { label: 'Connected', icon: CheckCircle, variant: 'success' as const },
+  disconnected: { label: 'Disconnected', icon: XCircle, variant: 'secondary' as const },
+  pending: { label: 'Pending', icon: Clock, variant: 'warning' as const },
   error: { label: 'Error', icon: XCircle, variant: 'destructive' as const },
+};
+
+const lifecycleConfig: Record<
+  NonNullable<PlatformConnection['installation']>['lifecycleState'],
+  { label: string; tone: string; helper: string }
+> = {
+  installed: {
+    label: 'Installed',
+    tone: 'text-slate-700 dark:text-slate-300',
+    helper: 'The app is installed, but customer setup has not started yet.',
+  },
+  business_details_needed: {
+    label: 'Business details needed',
+    tone: 'text-amber-700 dark:text-amber-300',
+    helper: 'Brand registration cannot start until business details are completed.',
+  },
+  connection_pending: {
+    label: 'Connection pending',
+    tone: 'text-amber-700 dark:text-amber-300',
+    helper: 'The provider connection is still being finalized.',
+  },
+  brand_pending: {
+    label: 'Brand pending',
+    tone: 'text-sky-700 dark:text-sky-300',
+    helper: 'Business verification is in progress with the provider.',
+  },
+  campaign_pending: {
+    label: 'Campaign pending',
+    tone: 'text-sky-700 dark:text-sky-300',
+    helper: 'A2P campaign setup is not approved yet.',
+  },
+  campaign_approved: {
+    label: 'Campaign approved',
+    tone: 'text-emerald-700 dark:text-emerald-300',
+    helper: 'Campaign approval is complete. Sender numbers are the next step.',
+  },
+  number_setup_required: {
+    label: 'Number setup required',
+    tone: 'text-amber-700 dark:text-amber-300',
+    helper: 'An approved campaign exists, but no active sender number is attached yet.',
+  },
+  port_in_progress: {
+    label: 'Port in progress',
+    tone: 'text-sky-700 dark:text-sky-300',
+    helper: 'A port order is underway before the install can go live.',
+  },
+  provider_not_activated: {
+    label: 'Sender validation needed',
+    tone: 'text-amber-700 dark:text-amber-300',
+    helper: 'Approved assets are linked. Send an embedded test message to confirm the outbound path.',
+  },
+  ready: {
+    label: 'Ready',
+    tone: 'text-emerald-700 dark:text-emerald-300',
+    helper: 'The install is configured and has already handled outbound traffic.',
+  },
+  error_attention_required: {
+    label: 'Needs attention',
+    tone: 'text-red-700 dark:text-red-300',
+    helper: 'A rejected brand or campaign is blocking the install.',
+  },
 };
 
 const availablePlatforms: AvailablePlatform[] = [
   {
-    id: 'ghl',
+    id: 'leadconnector',
     name: 'GoHighLevel',
     description: 'Connect your GHL account to enable SMS conversations',
-    icon: '🚀',
-    color: 'from-blue-500 to-blue-600',
     available: true,
+    statusNote: 'Live now',
   },
   {
     id: 'shopify',
     name: 'Shopify',
-    description: 'Send order notifications and marketing messages',
-    icon: '🛒',
-    color: 'from-green-500 to-green-600',
+    description: 'Reserved for a future dedicated commerce adapter.',
     available: false,
+    statusNote: 'Coming soon',
   },
   {
     id: 'hubspot',
     name: 'HubSpot',
-    description: 'Integrate SMS with your HubSpot CRM',
-    icon: '🔶',
-    color: 'from-orange-500 to-orange-600',
+    description: 'Reserved for a future CRM adapter with its own workflow model.',
     available: false,
+    statusNote: 'Coming soon',
   },
   {
     id: 'salesforce',
     name: 'Salesforce',
-    description: 'Connect Salesforce for enterprise SMS automation',
-    icon: '☁️',
-    color: 'from-cyan-500 to-cyan-600',
+    description: 'Reserved for a future enterprise adapter once the GHL loop is stable.',
     available: false,
+    statusNote: 'Coming soon',
   },
   {
     id: 'zoho',
     name: 'Zoho',
-    description: 'Integrate with Zoho CRM and marketing tools',
-    icon: '📊',
-    color: 'from-red-500 to-red-600',
+    description: 'Reserved for a future Zoho CRM adapter after the platform core hardens.',
     available: false,
+    statusNote: 'Coming soon',
   },
 ];
 
@@ -97,6 +228,7 @@ export function PlatformsPage() {
   const [connections, setConnections] = useState<PlatformConnection[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnecting, setIsConnecting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadConnections();
@@ -104,12 +236,14 @@ export function PlatformsPage() {
 
   const loadConnections = async () => {
     try {
+      setError(null);
       const response = await api.getPlatformConnections();
       if (response.success && response.data) {
         setConnections(response.data);
       }
     } catch (error) {
       console.error('Failed to load connections:', error);
+      setError('Unable to load platform connections right now.');
     } finally {
       setIsLoading(false);
     }
@@ -119,8 +253,8 @@ export function PlatformsPage() {
     setIsConnecting(platformId);
     try {
       const response = await api.getOAuthUrl(platformId);
-      if (response.success && response.data?.url) {
-        window.location.href = response.data.url;
+      if (response.success && response.data?.authUrl) {
+        window.location.href = response.data.authUrl;
       }
     } catch (error) {
       console.error('Failed to get OAuth URL:', error);
@@ -142,40 +276,82 @@ export function PlatformsPage() {
     }
   };
 
-  const handleRefreshToken = async (connectionId: string) => {
-    try {
-      const response = await api.refreshPlatformToken(connectionId);
-      if (response.success) {
-        loadConnections();
-      }
-    } catch (error) {
-      console.error('Failed to refresh token:', error);
-    }
-  };
-
   const connectedPlatformIds = new Set(connections.map((c) => c.platform));
+  const connectedCount = connections.filter((connection) => connection.status === 'connected').length;
+  const pendingCount = connections.filter((connection) => connection.status === 'pending').length;
 
   return (
     <div>
       <Header
         title="Platforms"
-        subtitle="Connect and manage your platform integrations"
+        subtitle="Connect the systems your team actually uses and keep messaging infrastructure visible."
       />
 
       <div className="p-6 space-y-8">
+        <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-sky-950 px-6 py-6 text-slate-50 shadow-2xl shadow-slate-950/10">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl space-y-4">
+              <Badge className="w-fit bg-white/10 text-slate-100" variant="outline">
+                <Sparkles className="h-3.5 w-3.5" />
+                Integration Hub
+              </Badge>
+              <div className="space-y-2">
+                <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
+                  Professional control over platform connections
+                </h2>
+                <p className="max-w-xl text-sm leading-6 text-slate-300 md:text-base">
+                  Review connection health, manage the embedded GHL rollout, and keep the
+                  provider-mode backlog visible until HighLevel enables the provider path.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 backdrop-blur-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Connected</p>
+                <p className="mt-2 text-3xl font-semibold">{connectedCount}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 backdrop-blur-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Pending</p>
+                <p className="mt-2 text-3xl font-semibold">{pendingCount}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 backdrop-blur-sm">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Available Now</p>
+                <p className="mt-2 text-3xl font-semibold">
+                  {availablePlatforms.filter((platform) => platform.available).length}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Connected Platforms */}
-        <div>
-          <h2 className="text-lg font-semibold mb-4">Connected Platforms</h2>
+        <section className="space-y-4">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                Active Connections
+              </h2>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Each connection is tied to an organization workspace and OAuth installation.
+              </p>
+            </div>
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                {error}
+              </div>
+            )}
+          </div>
           {isLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[...Array(2)].map((_, i) => (
-                <Card key={i} variant="glass">
+                <Card key={i} className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardContent className="p-6">
                     <div className="animate-pulse flex items-center gap-4">
-                      <div className="w-12 h-12 bg-muted rounded-xl" />
+                      <div className="w-12 h-12 rounded-2xl bg-slate-200 dark:bg-slate-800" />
                       <div className="flex-1 space-y-2">
-                        <div className="h-4 bg-muted rounded w-1/3" />
-                        <div className="h-3 bg-muted rounded w-1/2" />
+                        <div className="h-4 w-1/3 rounded bg-slate-200 dark:bg-slate-800" />
+                        <div className="h-3 w-1/2 rounded bg-slate-200 dark:bg-slate-800" />
                       </div>
                     </div>
                   </CardContent>
@@ -183,14 +359,17 @@ export function PlatformsPage() {
               ))}
             </div>
           ) : connections.length === 0 ? (
-            <Card variant="glass">
-              <CardContent className="p-8 text-center">
-                <div className="inline-flex p-4 rounded-2xl bg-gray-100 dark:bg-gray-800 mb-4">
-                  <Plug className="h-8 w-8 text-muted-foreground" />
+            <Card className="border-dashed border-slate-300 bg-slate-50/80 shadow-none dark:border-slate-700 dark:bg-slate-900/60">
+              <CardContent className="p-10 text-center">
+                <div className="mx-auto mb-4 inline-flex rounded-2xl border border-slate-200 bg-white p-4 text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  <Plug className="h-8 w-8" />
                 </div>
-                <h3 className="font-semibold mb-2">No platforms connected</h3>
-                <p className="text-sm text-muted-foreground">
-                  Connect a platform below to start sending SMS messages through your favorite tools.
+                <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  No platforms connected
+                </h3>
+                <p className="mx-auto max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+                  Start with GoHighLevel to enable OAuth-based account linking and route
+                  messaging activity through Signalmash.
                 </p>
               </CardContent>
             </Card>
@@ -200,6 +379,9 @@ export function PlatformsPage() {
                 const platform = platformConfigs[connection.platform];
                 const status = statusConfig[connection.status];
                 const StatusIcon = status.icon;
+                const lifecycle = connection.installation
+                  ? lifecycleConfig[connection.installation.lifecycleState]
+                  : null;
 
                 return (
                   <motion.div
@@ -208,17 +390,19 @@ export function PlatformsPage() {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: index * 0.1 }}
                   >
-                    <Card variant="glass">
+                    <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                       <CardContent className="p-6">
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`p-3 rounded-xl ${platform.bgColor}`}>
-                              <Plug className={`h-5 w-5 ${platform.color}`} />
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex min-w-0 items-center gap-4">
+                            <div className={`rounded-2xl border p-3 ${platform.surface} ${platform.border}`}>
+                              <Link2 className={`h-5 w-5 ${platform.accent}`} />
                             </div>
-                            <div>
-                              <h3 className="font-semibold">{platform.name}</h3>
-                              <p className="text-sm text-muted-foreground">
-                                {connection.platformAccountName}
+                            <div className="min-w-0">
+                              <h3 className="font-semibold text-slate-900 dark:text-slate-100">
+                                {platform.name}
+                              </h3>
+                              <p className="truncate text-sm text-slate-600 dark:text-slate-400">
+                                {connection.platformAccountName || connection.platformAccountId}
                               </p>
                             </div>
                           </div>
@@ -228,31 +412,114 @@ export function PlatformsPage() {
                           </Badge>
                         </div>
 
-                        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                          <div className="text-sm text-muted-foreground">
-                            {connection.lastSyncAt && (
-                              <span>
-                                Last sync: {new Date(connection.lastSyncAt).toLocaleString()}
-                              </span>
-                            )}
+                        <div className="mt-5 grid gap-3 rounded-2xl bg-slate-50 p-4 dark:bg-slate-900/80">
+                          {lifecycle && (
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950">
+                              <div className="flex items-center justify-between gap-4">
+                                <div>
+                                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                    Onboarding State
+                                  </p>
+                                  <p className={`mt-2 text-sm font-semibold ${lifecycle.tone}`}>
+                                    {lifecycle.label}
+                                  </p>
+                                </div>
+                                <Badge variant="secondary">Embedded rollout</Badge>
+                              </div>
+                              <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                                {lifecycle.helper}
+                              </p>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-3 text-sm">
+                            <Building2 className="h-4 w-4 text-slate-400" />
+                            <span className="text-slate-500 dark:text-slate-400">Account ID</span>
+                            <span className="truncate font-medium text-slate-900 dark:text-slate-100">
+                              {connection.platformAccountId}
+                            </span>
                           </div>
+                          <div className="flex items-center gap-3 text-sm">
+                            <ShieldCheck className="h-4 w-4 text-slate-400" />
+                            <span className="text-slate-500 dark:text-slate-400">Connected On</span>
+                            <span className="font-medium text-slate-900 dark:text-slate-100">
+                              {formatDateTime(connection.createdAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-sm">
+                            <Clock className="h-4 w-4 text-slate-400" />
+                            <span className="text-slate-500 dark:text-slate-400">Lifecycle Sync</span>
+                            <span className="font-medium text-slate-900 dark:text-slate-100">
+                              {connection.installation?.lastSyncAt
+                                ? formatDateTime(connection.installation.lastSyncAt)
+                                : 'No sync recorded'}
+                            </span>
+                          </div>
+                          {connection.installation && (
+                            <div className="grid grid-cols-3 gap-3 pt-1 text-sm">
+                              <div className="rounded-xl bg-white px-3 py-3 dark:bg-slate-950">
+                                <p className="text-slate-500 dark:text-slate-400">Brands</p>
+                                <p className="mt-1 font-semibold text-slate-900 dark:text-slate-100">
+                                  {connection.installation.resourceCounts.totalBrands}
+                                </p>
+                              </div>
+                              <div className="rounded-xl bg-white px-3 py-3 dark:bg-slate-950">
+                                <p className="text-slate-500 dark:text-slate-400">Campaigns</p>
+                                <p className="mt-1 font-semibold text-slate-900 dark:text-slate-100">
+                                  {connection.installation.resourceCounts.totalCampaigns}
+                                </p>
+                              </div>
+                              <div className="rounded-xl bg-white px-3 py-3 dark:bg-slate-950">
+                                <p className="text-slate-500 dark:text-slate-400">Numbers</p>
+                                <p className="mt-1 font-semibold text-slate-900 dark:text-slate-100">
+                                  {connection.installation.resourceCounts.activeNumbers}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                          {connection.installation?.checklist?.length ? (
+                            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950">
+                              <div className="flex items-center justify-between gap-4">
+                                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Readiness Checklist
+                                </p>
+                                <Badge variant="outline">
+                                  {connection.installation.checklist.filter((item) => item.complete).length}/
+                                  {connection.installation.checklist.length} complete
+                                </Badge>
+                              </div>
+                              <div className="mt-4 space-y-3">
+                                {connection.installation.checklist.map((item) => (
+                                  <div
+                                    key={item.key}
+                                    className="rounded-xl border border-slate-200 px-3 py-3 dark:border-slate-800"
+                                  >
+                                    <div className="flex items-center justify-between gap-3">
+                                      <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                        {item.label}
+                                      </p>
+                                      <Badge variant={item.complete ? 'success' : 'secondary'}>
+                                        {item.complete ? 'Done' : 'Pending'}
+                                      </Badge>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-400">
+                                      {item.helper}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-5 flex items-center justify-end">
                           <div className="flex gap-2">
-                            {(connection.status === 'expired' || connection.status === 'error') && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleRefreshToken(connection.id)}
-                              >
-                                <RefreshCw className="h-4 w-4" />
-                              </Button>
-                            )}
                             <Button
-                              variant="ghost"
-                              size="sm"
+                              variant="outline"
                               onClick={() => handleDisconnect(connection.id)}
-                              className="text-destructive hover:text-destructive"
+                              className="border-slate-300 text-slate-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-red-500/30 dark:hover:bg-red-500/10 dark:hover:text-red-300"
                             >
                               <Trash2 className="h-4 w-4" />
+                              Disconnect
                             </Button>
                           </div>
                         </div>
@@ -263,14 +530,22 @@ export function PlatformsPage() {
               })}
             </div>
           )}
-        </div>
+        </section>
 
         {/* Available Platforms */}
-        <div>
-          <h2 className="text-lg font-semibold mb-4">Available Integrations</h2>
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+              Available Integrations
+            </h2>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Only platforms with production-ready backend support can be connected here.
+            </p>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {availablePlatforms.map((platform, index) => {
               const isConnected = connectedPlatformIds.has(platform.id as any);
+              const platformConfig = platformConfigs[platform.id];
 
               return (
                 <motion.div
@@ -280,19 +555,16 @@ export function PlatformsPage() {
                   transition={{ delay: index * 0.05 }}
                 >
                   <Card
-                    variant="glass"
-                    className={`${
+                    className={`border shadow-sm ${
                       platform.available && !isConnected
-                        ? 'card-lift cursor-pointer'
-                        : 'opacity-75'
+                        ? 'cursor-pointer border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950'
+                        : 'border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-900/60'
                     }`}
                   >
                     <CardContent className="p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div
-                          className={`p-3 rounded-xl bg-gradient-to-br ${platform.color} text-2xl`}
-                        >
-                          {platform.icon}
+                      <div className="mb-5 flex items-start justify-between gap-4">
+                        <div className={`rounded-2xl border p-3 ${platformConfig.surface} ${platformConfig.border}`}>
+                          <Plug className={`h-5 w-5 ${platformConfig.accent}`} />
                         </div>
                         {!platform.available && (
                           <Badge variant="secondary">Coming Soon</Badge>
@@ -301,32 +573,38 @@ export function PlatformsPage() {
                           <Badge variant="success">Connected</Badge>
                         )}
                       </div>
-                      <h3 className="font-semibold mb-1">{platform.name}</h3>
-                      <p className="text-sm text-muted-foreground mb-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="font-semibold text-slate-900 dark:text-slate-100">{platform.name}</h3>
+                          <span className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+                            {platform.statusNote}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-3 min-h-[3rem] text-sm leading-6 text-slate-600 dark:text-slate-400">
                         {platform.description}
                       </p>
                       {platform.available && !isConnected && (
                         <Button
-                          className="w-full"
+                          className="mt-5 w-full"
                           onClick={() => handleConnect(platform.id)}
                           isLoading={isConnecting === platform.id}
-                          leftIcon={<Plus className="h-4 w-4" />}
+                          rightIcon={<ArrowRight className="h-4 w-4" />}
                         >
-                          Connect
+                          Connect {platform.name}
                         </Button>
                       )}
                       {isConnected && (
                         <Button
                           variant="outline"
-                          className="w-full"
-                          leftIcon={<Settings className="h-4 w-4" />}
+                          className="mt-5 w-full border-slate-300 dark:border-slate-700"
                         >
-                          Configure
+                          Already connected
                         </Button>
                       )}
                       {!platform.available && (
-                        <Button variant="outline" className="w-full" disabled>
-                          Notify Me
+                        <Button variant="outline" className="mt-5 w-full border-slate-300 dark:border-slate-700" disabled>
+                          Not available yet
                         </Button>
                       )}
                     </CardContent>
@@ -335,7 +613,7 @@ export function PlatformsPage() {
               );
             })}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

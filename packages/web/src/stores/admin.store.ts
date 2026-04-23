@@ -3,11 +3,13 @@
 // ===========================================
 
 import { create } from 'zustand';
+import { safeGetItem, safeRemoveItem, safeSetItem } from '@/lib/storage';
 
 interface Admin {
   id: string;
   email: string;
-  name: string;
+  name?: string;
+  role?: string;
 }
 
 interface AdminAuthState {
@@ -23,9 +25,35 @@ interface AdminAuthState {
 }
 
 const ADMIN_API_URL = import.meta.env.VITE_API_URL || '/api';
+const ADMIN_PROFILE_KEY = 'adminProfile';
+
+const saveAdminSession = (payload: { accessToken: string; refreshToken: string; admin?: Admin }) => {
+  safeSetItem('adminAccessToken', payload.accessToken);
+  safeSetItem('adminRefreshToken', payload.refreshToken);
+  if (payload.admin) {
+    safeSetItem(ADMIN_PROFILE_KEY, JSON.stringify(payload.admin));
+  }
+};
+
+const clearAdminSession = () => {
+  safeRemoveItem('adminAccessToken');
+  safeRemoveItem('adminRefreshToken');
+  safeRemoveItem(ADMIN_PROFILE_KEY);
+};
+
+const getStoredAdminProfile = (): Admin | null => {
+  const raw = safeGetItem(ADMIN_PROFILE_KEY);
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw) as Admin;
+  } catch {
+    return null;
+  }
+};
 
 export const useAdminStore = create<AdminAuthState>((set, _get) => ({
-  admin: null,
+  admin: typeof window !== 'undefined' ? getStoredAdminProfile() : null,
   isAuthenticated: false,
   isLoading: true,
   error: null,
@@ -45,8 +73,11 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
         throw new Error(data.error?.message || 'Login failed');
       }
 
-      localStorage.setItem('adminAccessToken', data.data.tokens.accessToken);
-      localStorage.setItem('adminRefreshToken', data.data.tokens.refreshToken);
+      saveAdminSession({
+        accessToken: data.data.tokens.accessToken,
+        refreshToken: data.data.tokens.refreshToken,
+        admin: data.data.admin,
+      });
 
       set({
         admin: data.data.admin,
@@ -63,7 +94,7 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
   },
 
   logout: async () => {
-    const refreshToken = localStorage.getItem('adminRefreshToken');
+    const refreshToken = safeGetItem('adminRefreshToken');
     if (refreshToken) {
       try {
         await fetch(`${ADMIN_API_URL}/admin/auth/logout`, {
@@ -76,8 +107,7 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
       }
     }
 
-    localStorage.removeItem('adminAccessToken');
-    localStorage.removeItem('adminRefreshToken');
+    clearAdminSession();
 
     set({
       admin: null,
@@ -87,7 +117,8 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
   },
 
   checkAuth: async () => {
-    const token = localStorage.getItem('adminAccessToken');
+    const token = safeGetItem('adminAccessToken');
+    const storedProfile = getStoredAdminProfile();
     if (!token) {
       set({ isLoading: false, isAuthenticated: false });
       return;
@@ -100,7 +131,7 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
 
       if (!response.ok) {
         // Try refresh
-        const refreshToken = localStorage.getItem('adminRefreshToken');
+        const refreshToken = safeGetItem('adminRefreshToken');
         if (refreshToken) {
           const refreshResponse = await fetch(`${ADMIN_API_URL}/admin/auth/refresh`, {
             method: 'POST',
@@ -110,8 +141,11 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
 
           if (refreshResponse.ok) {
             const refreshData = await refreshResponse.json();
-            localStorage.setItem('adminAccessToken', refreshData.data.accessToken);
-            localStorage.setItem('adminRefreshToken', refreshData.data.refreshToken);
+            saveAdminSession({
+              accessToken: refreshData.data.accessToken,
+              refreshToken: refreshData.data.refreshToken,
+              admin: storedProfile || undefined,
+            });
 
             // Retry with new token
             const retryResponse = await fetch(`${ADMIN_API_URL}/admin/me`, {
@@ -120,8 +154,13 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
 
             if (retryResponse.ok) {
               const retryData = await retryResponse.json();
+              const adminProfile = {
+                ...storedProfile,
+                ...retryData.data.admin,
+              };
+              safeSetItem(ADMIN_PROFILE_KEY, JSON.stringify(adminProfile));
               set({
-                admin: retryData.data.admin,
+                admin: adminProfile,
                 isAuthenticated: true,
                 isLoading: false,
               });
@@ -134,14 +173,18 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
       }
 
       const data = await response.json();
+      const adminProfile = {
+        ...storedProfile,
+        ...data.data.admin,
+      };
+      safeSetItem(ADMIN_PROFILE_KEY, JSON.stringify(adminProfile));
       set({
-        admin: data.data.admin,
+        admin: adminProfile,
         isAuthenticated: true,
         isLoading: false,
       });
     } catch {
-      localStorage.removeItem('adminAccessToken');
-      localStorage.removeItem('adminRefreshToken');
+      clearAdminSession();
       set({
         admin: null,
         isAuthenticated: false,
@@ -156,7 +199,34 @@ export const useAdminStore = create<AdminAuthState>((set, _get) => ({
 // Admin API helper
 class AdminApiClient {
   private getToken(): string | null {
-    return localStorage.getItem('adminAccessToken');
+    return safeGetItem('adminAccessToken');
+  }
+
+  private async refreshAccessToken(): Promise<string | null> {
+    const refreshToken = safeGetItem('adminRefreshToken');
+    if (!refreshToken) {
+      return null;
+    }
+
+    const response = await fetch(`${ADMIN_API_URL}/admin/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!response.ok) {
+      clearAdminSession();
+      return null;
+    }
+
+    const data = await response.json();
+    saveAdminSession({
+      accessToken: data.data.accessToken,
+      refreshToken: data.data.refreshToken,
+      admin: getStoredAdminProfile() || undefined,
+    });
+
+    return data.data.accessToken;
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -176,6 +246,30 @@ class AdminApiClient {
     });
 
     const data = await response.json();
+
+    if (response.status === 401) {
+      const refreshedToken = await this.refreshAccessToken();
+      if (refreshedToken) {
+        const retryHeaders = {
+          ...headers,
+          Authorization: `Bearer ${refreshedToken}`,
+        };
+
+        const retryResponse = await fetch(`${ADMIN_API_URL}/admin${endpoint}`, {
+          ...options,
+          headers: retryHeaders,
+        });
+
+        const retryData = await retryResponse.json();
+        if (!retryResponse.ok) {
+          throw new Error(retryData.error?.message || 'Request failed');
+        }
+
+        return retryData;
+      }
+
+      throw new Error('Admin session expired. Please log in again.');
+    }
 
     if (!response.ok) {
       throw new Error(data.error?.message || 'Request failed');
@@ -215,6 +309,14 @@ class AdminApiClient {
     return this.put<{ success: boolean; data: any }>(`/settings/${key}`, { value, description });
   }
 
+  async getSignalmashDiagnostic() {
+    return this.get<{ success: boolean; data: any | null }>('/settings/signalmash/diagnostic');
+  }
+
+  async testSignalmashConnection() {
+    return this.post<{ success: boolean; data: any }>('/settings/signalmash/test-connection');
+  }
+
   // Dashboard
   async getDashboard() {
     return this.get<{ success: boolean; data: any }>('/dashboard');
@@ -223,6 +325,23 @@ class AdminApiClient {
   // Organizations
   async getOrganizations(page = 1, limit = 20) {
     return this.get<{ success: boolean; data: any[]; meta: any }>(`/organizations?page=${page}&limit=${limit}`);
+  }
+
+  async linkExistingSignalmashAssets(data: {
+    organizationId: string;
+    brandName: string;
+    signalmashBrandId: string;
+    tcrBrandId?: string;
+    campaignName: string;
+    signalmashCampaignId: string;
+    tcrCampaignId?: string;
+    phoneNumber: string;
+    signalmashNumberId?: string;
+    friendlyName?: string;
+    configureWebhook?: boolean;
+    makeDefaultSender?: boolean;
+  }) {
+    return this.post<{ success: boolean; data: any; message?: string }>('/organizations/link-existing-assets', data);
   }
 
   // Audit logs

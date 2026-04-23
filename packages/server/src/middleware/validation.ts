@@ -68,9 +68,16 @@ export const idParamSchema = z.object({
 
 export const emailSchema = z.string().email('Invalid email address');
 
-export const phoneSchema = z
-  .string()
-  .regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format');
+const normalizePhoneNumber = (value: string) =>
+  value
+    .trim()
+    .replace(/[\s\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+    .replace(/[().-]/g, '');
+
+export const phoneSchema = z.preprocess(
+  (value) => (typeof value === 'string' ? normalizePhoneNumber(value) : value),
+  z.string().regex(/^\+?[1-9]\d{1,14}$/, 'Invalid phone number format')
+);
 
 export const einSchema = z
   .string()

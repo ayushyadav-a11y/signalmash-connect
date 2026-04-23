@@ -25,40 +25,41 @@ export function AdminHeader({ title, subtitle, showBack, backTo = '/admin/dashbo
   };
 
   return (
-    <header className="bg-gray-800/50 border-b border-gray-700 backdrop-blur-xl sticky top-0 z-50 dark:bg-gray-900/50">
-      <div className="max-w-7xl mx-auto px-6 py-4">
-        <div className="flex items-center justify-between">
+    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:border-slate-800 dark:bg-slate-950/95 dark:supports-[backdrop-filter]:bg-slate-950/80">
+      <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-4">
             {showBack && (
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => navigate(backTo)}
-                className="text-gray-400 hover:text-white"
+                className="text-slate-500 hover:text-slate-950 dark:text-slate-400 dark:hover:text-slate-50"
               >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back
               </Button>
             )}
-            <div className="p-2 rounded-xl bg-gradient-to-br from-red-500 to-orange-600">
-              <Shield className="h-6 w-6 text-white" />
+            <div className="rounded-2xl bg-slate-950 p-3 text-white dark:bg-slate-100 dark:text-slate-950">
+              <Shield className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">{title}</h1>
-              {subtitle && <p className="text-sm text-gray-400">{subtitle}</p>}
+              <h1 className="text-xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">{title}</h1>
+              {subtitle && <p className="text-sm text-slate-600 dark:text-slate-400">{subtitle}</p>}
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-400">
-              Welcome, <span className="text-white font-medium">{admin?.name}</span>
-            </span>
-            <ThemeToggle className="text-gray-400 hover:text-white" />
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm dark:border-slate-800 dark:bg-slate-900">
+              <span className="text-slate-500 dark:text-slate-400">Admin</span>{' '}
+              <span className="font-medium text-slate-950 dark:text-slate-50">{admin?.name || admin?.email}</span>
+            </div>
+            <ThemeToggle variant="outline" size="icon" className="border-slate-300 dark:border-slate-700" />
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={handleLogout}
-              className="text-gray-400 hover:text-white"
+              className="border-slate-300 text-slate-700 dark:border-slate-700 dark:text-slate-200"
             >
               <LogOut className="h-4 w-4 mr-2" />
               Logout

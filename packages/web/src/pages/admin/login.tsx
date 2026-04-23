@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { motion } from 'framer-motion';
 import { Eye, EyeOff, Mail, Lock, ArrowRight, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { useAdminStore } from '@/stores/admin.store';
 
 const loginSchema = z.object({
@@ -35,54 +34,49 @@ export function AdminLoginPage() {
       await login(data.email, data.password);
       navigate('/admin/dashboard');
     } catch {
-      // Error is handled by the store
+      // store handles error state
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 dark:from-gray-950 dark:via-gray-900 dark:to-gray-950">
-      {/* Decorative background */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-red-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-orange-500/10 rounded-full blur-3xl" />
-      </div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="relative w-full max-w-md"
-      >
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-red-500 to-orange-600 shadow-lg mb-4">
-            <Shield className="h-8 w-8 text-white" />
+    <div className="min-h-screen bg-slate-100 text-slate-950 dark:bg-slate-950 dark:text-slate-50">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col justify-center gap-10 px-4 py-10 lg:grid lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:px-8">
+        <section className="space-y-6">
+          <div className="inline-flex rounded-2xl bg-slate-950 p-4 text-white dark:bg-slate-100 dark:text-slate-950">
+            <Shield className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Admin Portal</h1>
-          <p className="text-gray-400 mt-1">SignalMash Connect Administration</p>
-        </div>
+          <div className="space-y-3">
+            <p className="text-sm font-medium uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+              Admin Portal
+            </p>
+            <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+              Operational control for Signalmash Connect
+            </h1>
+            <p className="max-w-xl text-base leading-7 text-slate-600 dark:text-slate-400">
+              Sign in to manage runtime settings, monitor platform usage, and review connected organizations
+              from the cleaned-up admin surface.
+            </p>
+          </div>
+        </section>
 
-        <Card className="bg-gray-800/50 border-gray-700 shadow-2xl">
-          <CardHeader className="space-y-1 pb-4">
-            <CardTitle className="text-xl text-white">Sign in</CardTitle>
-            <CardDescription className="text-gray-400">
-              Enter your admin credentials to access the portal
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <Card className="border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-950">
+          <CardContent className="p-8">
+            <div className="mb-8">
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">Sign in</h2>
+              <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                Restricted access for platform administrators only.
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
               {error && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="p-3 rounded-xl bg-red-500/10 text-red-400 text-sm border border-red-500/20"
-                >
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
                   {error}
-                </motion.div>
+                </div>
               )}
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300">Email</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
                 <Input
                   {...register('email')}
                   type="email"
@@ -90,12 +84,12 @@ export function AdminLoginPage() {
                   error={errors.email?.message}
                   leftIcon={<Mail className="h-4 w-4" />}
                   onChange={() => clearError()}
-                  className="bg-gray-700/50 border-gray-600 text-white placeholder:text-gray-500"
+                  className="border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-300">Password</label>
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Password</label>
                 <Input
                   {...register('password')}
                   type={showPassword ? 'text' : 'password'}
@@ -106,23 +100,19 @@ export function AdminLoginPage() {
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="focus:outline-none text-gray-400"
+                      className="focus:outline-none text-slate-400"
                     >
-                      {showPassword ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   }
                   onChange={() => clearError()}
-                  className="bg-gray-700/50 border-gray-600 text-white placeholder:text-gray-500"
+                  className="border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
                 />
               </div>
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700"
+                className="w-full"
                 size="lg"
                 isLoading={isLoading}
                 rightIcon={<ArrowRight className="h-4 w-4" />}
@@ -132,11 +122,7 @@ export function AdminLoginPage() {
             </form>
           </CardContent>
         </Card>
-
-        <p className="mt-8 text-center text-xs text-gray-500">
-          This is a restricted area. Unauthorized access is prohibited.
-        </p>
-      </motion.div>
+      </div>
     </div>
   );
 }

@@ -2,94 +2,45 @@
 // Base Platform Adapter Interface
 // ===========================================
 
-import type { Platform, PlatformConnection } from '@prisma/client';
+import type { PlatformConnection } from '@prisma/client';
+import type {
+  OAuthTokenSet,
+  OutboundMessagePayload,
+  PlatformAccountProfile,
+  PlatformAdapter,
+  PlatformAdapterConnection,
+} from '@signalmash-connect/shared';
 
-export interface OAuthTokens {
-  accessToken: string;
-  refreshToken?: string;
-  expiresIn?: number;
-  tokenType: string;
-  scope?: string;
-}
+export type OAuthTokens = OAuthTokenSet;
+export type PlatformAccountInfo = PlatformAccountProfile;
+export type { OutboundMessagePayload };
 
-export interface PlatformAccountInfo {
-  id: string;
-  name: string;
-  email?: string;
-  phone?: string;
-  website?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface OutboundMessagePayload {
-  conversationId?: string;
-  contactId?: string;
-  from: string;
-  to: string;
-  body: string;
-  mediaUrls?: string[];
-}
-
-export interface InboundMessageData {
-  platformMessageId: string;
-  platformConversationId?: string;
-  from: string;
-  to: string;
-  body: string;
-  mediaUrls?: string[];
-  timestamp: Date;
-}
-
-export interface MessageStatusUpdate {
-  platformMessageId: string;
-  status: 'sent' | 'delivered' | 'failed' | 'undelivered';
-  errorCode?: string;
-  errorMessage?: string;
-  timestamp: Date;
-}
-
-/**
- * Base adapter interface for all platform integrations
- */
-export interface PlatformAdapter {
-  readonly platform: Platform;
-
-  // OAuth
-  getAuthorizationUrl(state: string, redirectUri: string): string | Promise<string>;
-  exchangeCodeForTokens(code: string, redirectUri: string): Promise<OAuthTokens>;
-  refreshTokens(refreshToken: string): Promise<OAuthTokens>;
-
-  // Account Info
-  getAccountInfo(accessToken: string): Promise<PlatformAccountInfo>;
-
-  // Messaging
-  sendMessage?(
-    connection: PlatformConnection,
-    payload: OutboundMessagePayload
-  ): Promise<{ platformMessageId: string }>;
-
-  updateMessageStatus?(
-    connection: PlatformConnection,
-    platformMessageId: string,
-    status: string
-  ): Promise<void>;
-
-  // Webhooks
-  verifyWebhookSignature?(payload: string, signature: string): boolean;
-  parseInboundMessage?(payload: unknown): InboundMessageData | null;
-  parseStatusUpdate?(payload: unknown): MessageStatusUpdate | null;
+export function toPlatformAdapterConnection(
+  connection: PlatformConnection
+): PlatformAdapterConnection {
+  return {
+    id: connection.id,
+    organizationId: connection.organizationId,
+    platform: connection.platform,
+    externalAccountId: connection.platformAccountId,
+    externalAccountName: connection.platformAccountName ?? undefined,
+    accessToken: connection.accessToken,
+    refreshToken: connection.refreshToken,
+    tokenExpiresAt: connection.tokenExpiresAt,
+    metadata: (connection.metadata as Record<string, unknown> | null | undefined) ?? null,
+  };
 }
 
 /**
  * Abstract base class with common functionality
  */
 export abstract class BasePlatformAdapter implements PlatformAdapter {
-  abstract readonly platform: Platform;
+  abstract readonly platform: PlatformAdapter['platform'];
 
   abstract getAuthorizationUrl(state: string, redirectUri: string): string | Promise<string>;
   abstract exchangeCodeForTokens(code: string, redirectUri: string): Promise<OAuthTokens>;
   abstract refreshTokens(refreshToken: string): Promise<OAuthTokens>;
-  abstract getAccountInfo(accessToken: string): Promise<PlatformAccountInfo>;
+  abstract getAccountInfo(accessToken: string, platformAccountId?: string, companyId?: string): Promise<PlatformAccountInfo>;
 
   /**
    * Helper to make authenticated API requests

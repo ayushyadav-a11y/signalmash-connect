@@ -37,6 +37,8 @@ const configSchema = z.object({
   ghlAppSsoKey: z.string().optional(),
   ghlApiDomain: z.string().url().default('https://services.leadconnectorhq.com'),
   ghlWebhookSecret: z.string().optional(),
+  ghlWebhookPublicKey: z.string().optional(),
+  ghlWebhookLegacyPublicKey: z.string().optional(),
 
   // Shopify (Future)
   shopifyApiKey: z.string().optional(),
@@ -88,6 +90,8 @@ function loadConfig() {
     ghlAppSsoKey: process.env['GHL_APP_SSO_KEY'],
     ghlApiDomain: process.env['GHL_API_DOMAIN'],
     ghlWebhookSecret: process.env['GHL_WEBHOOK_SECRET'],
+    ghlWebhookPublicKey: process.env['GHL_WEBHOOK_PUBLIC_KEY'],
+    ghlWebhookLegacyPublicKey: process.env['GHL_WEBHOOK_LEGACY_PUBLIC_KEY'],
 
     shopifyApiKey: process.env['SHOPIFY_API_KEY'],
     shopifyApiSecret: process.env['SHOPIFY_API_SECRET'],

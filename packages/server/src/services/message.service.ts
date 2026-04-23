@@ -3,17 +3,23 @@
 // ===========================================
 
 import { prisma } from '../config/database.js';
+import { config } from '../config/index.js';
 import { signalmashService } from './signalmash.service.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { formatPhoneE164 } from '@signalmash-connect/shared';
 import type { Message, MessageStatus, MessageDirection, MessageType } from '@prisma/client';
+import { integrationService } from './integration.service.js';
+import { complianceService } from './compliance.service.js';
+import { billingService } from './billing.service.js';
 
 interface SendMessageInput {
   organizationId: string;
   platformConnectionId?: string;
   campaignId?: string;
   phoneNumberId?: string;
+  platformMessageId?: string;
+  platformConversationId?: string;
   from: string;
   to: string;
   body: string;
@@ -35,11 +41,26 @@ interface ListMessagesOptions {
 }
 
 export class MessageService {
+  private getSignalmashWebhookUrl(): string {
+    return `${config.apiUrl}/webhooks/signalmash`;
+  }
+
   /**
    * Send an outbound message
    */
   async send(input: SendMessageInput): Promise<Message> {
-    const { organizationId, platformConnectionId, campaignId, phoneNumberId, from, to, body, mediaUrls } = input;
+    const {
+      organizationId,
+      platformConnectionId,
+      campaignId,
+      phoneNumberId,
+      platformMessageId,
+      platformConversationId,
+      from,
+      to,
+      body,
+      mediaUrls,
+    } = input;
 
     // Validate campaign if provided
     if (campaignId) {
@@ -60,6 +81,10 @@ export class MessageService {
     const formattedFrom = formatPhoneE164(from);
     const formattedTo = formatPhoneE164(to);
 
+    if (await complianceService.isSuppressed(organizationId, formattedTo)) {
+      throw new BadRequestError('Recipient has opted out from messaging');
+    }
+
     // Create message record (queued status)
     const message = await prisma.message.create({
       data: {
@@ -73,6 +98,8 @@ export class MessageService {
         to: formattedTo,
         body,
         mediaUrls,
+        platformMessageId,
+        platformConversationId,
         status: 'queued',
       },
     });
@@ -90,13 +117,14 @@ export class MessageService {
         to: formattedTo,
         body,
         mediaUrls,
+        webhookUrl: this.getSignalmashWebhookUrl(),
       });
 
       // Update with Signalmash message ID
       const updatedMessage = await prisma.message.update({
         where: { id: message.id },
         data: {
-          signalmashMessageId: result.messageId,
+          signalmashMessageId: result.messageId ?? null,
           status: 'sent',
           sentAt: new Date(),
         },
@@ -106,6 +134,17 @@ export class MessageService {
         { messageId: message.id, signalmashMessageId: result.messageId },
         'Message sent successfully'
       );
+
+      await billingService.recordMessageAcceptance({
+        organizationId,
+        messageId: updatedMessage.id,
+        direction: 'outbound',
+        unit: mediaUrls && mediaUrls.length > 0 ? 'mms' : 'sms',
+        source: 'signalmash_acceptance',
+        billingKey: `msg:${updatedMessage.id}:outbound`,
+      });
+
+      await integrationService.syncMessageMapping(updatedMessage);
 
       return updatedMessage;
     } catch (error) {
@@ -121,6 +160,136 @@ export class MessageService {
       logger.error({ messageId: message.id, error }, 'Failed to send message');
       throw error;
     }
+  }
+
+  async getByPlatformMessageId(
+    organizationId: string,
+    platformConnectionId: string,
+    platformMessageId: string
+  ): Promise<Message | null> {
+    return prisma.message.findFirst({
+      where: {
+        organizationId,
+        platformConnectionId,
+        platformMessageId,
+      },
+    });
+  }
+
+  async createQueuedPlatformMessage(input: SendMessageInput): Promise<Message> {
+    const existing =
+      input.platformMessageId && input.platformConnectionId
+        ? await this.getByPlatformMessageId(
+            input.organizationId,
+            input.platformConnectionId,
+            input.platformMessageId
+          )
+        : null;
+
+    if (existing) {
+      return existing;
+    }
+
+    const formattedFrom = formatPhoneE164(input.from);
+    const formattedTo = formatPhoneE164(input.to);
+
+    if (await complianceService.isSuppressed(input.organizationId, formattedTo)) {
+      throw new BadRequestError('Recipient has opted out from messaging');
+    }
+
+    return prisma.message.create({
+      data: {
+        organizationId: input.organizationId,
+        platformConnectionId: input.platformConnectionId,
+        campaignId: input.campaignId,
+        phoneNumberId: input.phoneNumberId,
+        platformMessageId: input.platformMessageId,
+        platformConversationId: input.platformConversationId,
+        direction: 'outbound',
+        type: input.mediaUrls && input.mediaUrls.length > 0 ? 'mms' : 'sms',
+        from: formattedFrom,
+        to: formattedTo,
+        body: input.body,
+        mediaUrls: input.mediaUrls,
+        status: 'queued',
+      },
+    });
+  }
+
+  async dispatchQueuedMessage(messageId: string): Promise<Message> {
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      throw new NotFoundError('Message not found');
+    }
+
+    if (message.signalmashMessageId && (message.status === 'sent' || message.status === 'delivered')) {
+      return message;
+    }
+
+    await prisma.message.update({
+      where: { id: message.id },
+      data: { status: 'sending' },
+    });
+
+    try {
+      if (await complianceService.isSuppressed(message.organizationId, message.to)) {
+        throw new BadRequestError('Recipient has opted out from messaging');
+      }
+
+      const result = await signalmashService.sendMessage({
+        from: message.from,
+        to: message.to,
+        body: message.body,
+        mediaUrls: Array.isArray(message.mediaUrls) ? message.mediaUrls as string[] : undefined,
+        webhookUrl: this.getSignalmashWebhookUrl(),
+      });
+
+      const updatedMessage = await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          signalmashMessageId: result.messageId ?? null,
+          status: 'sent',
+          sentAt: new Date(),
+        },
+      });
+
+      await billingService.recordMessageAcceptance({
+        organizationId: updatedMessage.organizationId,
+        messageId: updatedMessage.id,
+        direction: 'outbound',
+        unit: updatedMessage.type === 'mms' ? 'mms' : 'sms',
+        source: 'signalmash_acceptance',
+        billingKey: `msg:${updatedMessage.id}:outbound`,
+      });
+
+      await integrationService.syncMessageMapping(updatedMessage);
+
+      return updatedMessage;
+    } catch (error) {
+      await this.markFailed(
+        message.id,
+        error instanceof Error ? error.message : 'Unknown error'
+      );
+
+      throw error;
+    }
+  }
+
+  async markFailed(messageId: string, errorMessage: string): Promise<Message> {
+    const updatedMessage = await prisma.message.update({
+      where: { id: messageId },
+      data: {
+        status: 'failed',
+        errorMessage,
+      },
+    });
+
+    await integrationService.syncMessageMapping(updatedMessage);
+
+    return updatedMessage;
   }
 
   /**
@@ -168,6 +337,17 @@ export class MessageService {
       'Inbound message received'
     );
 
+    await billingService.recordMessageAcceptance({
+      organizationId: message.organizationId,
+      messageId: message.id,
+      direction: 'inbound',
+      unit: data.mediaUrls && data.mediaUrls.length > 0 ? 'mms' : 'sms',
+      source: 'signalmash_inbound',
+      billingKey: `msg:${message.id}:inbound`,
+    });
+
+    await integrationService.syncMessageMapping(message);
+
     return message;
   }
 
@@ -212,6 +392,8 @@ export class MessageService {
       { messageId: message.id, status },
       'Message status updated'
     );
+
+    await integrationService.syncMessageMapping(updatedMessage);
 
     return updatedMessage;
   }

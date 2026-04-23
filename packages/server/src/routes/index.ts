@@ -12,6 +12,9 @@ import { messageRoutes } from './message.routes.js';
 import { phoneNumberRoutes } from './phoneNumber.routes.js';
 import { platformRoutes } from './platform.routes.js';
 import { webhookRoutes } from './webhook.routes.js';
+import { billingRoutes } from './billing.routes.js';
+import { portOrderRoutes } from './port-order.routes.js';
+import { operationsRoutes } from './operations.routes.js';
 import adminRoutes from './admin.routes.js';
 
 const router: RouterType = Router();
@@ -25,6 +28,15 @@ router.get('/health', (req, res) => {
   });
 });
 
+// Direct webhook endpoint (for GHL marketplace compatibility)
+router.get('/webhook', (req, res) => {
+  res.status(200).json({ success: true });
+});
+
+router.post('/webhook', (req, res) => {
+  res.status(200).json({ success: true });
+});
+
 // API Routes
 router.use('/auth', authRoutes);
 router.use('/organization', organizationRoutes);
@@ -32,7 +44,10 @@ router.use('/brands', brandRoutes);
 router.use('/campaigns', campaignRoutes);
 router.use('/messages', messageRoutes);
 router.use('/phone-numbers', phoneNumberRoutes);
+router.use('/port-orders', portOrderRoutes);
 router.use('/platforms', platformRoutes);
+router.use('/billing', billingRoutes);
+router.use('/operations', operationsRoutes);
 router.use('/webhooks', webhookRoutes);
 
 // Admin Routes (separate namespace)

@@ -9,6 +9,8 @@ import { adminService, SETTINGS_KEYS } from '../services/admin.service.js';
 import { AppError } from '../utils/errors.js';
 import { verifyAdminAccessToken } from '../utils/jwt.js';
 import { prisma } from '../config/database.js';
+import { signalmashService } from '../services/signalmash.service.js';
+import { phoneNumberService } from '../services/phoneNumber.service.js';
 
 const router: RouterType = Router();
 
@@ -219,6 +221,61 @@ router.delete('/settings/:key', requireSuperAdmin, async (req: AdminRequest, res
   }
 });
 
+router.get('/settings/signalmash/diagnostic', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const latest = await prisma.adminAuditLog.findFirst({
+      where: {
+        action: 'TEST_SIGNALMASH_CONNECTION',
+        resource: 'signalmash_connectivity',
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        createdAt: true,
+        details: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: latest
+        ? {
+            id: latest.id,
+            createdAt: latest.createdAt,
+            ...(latest.details as Record<string, unknown> | null ?? {}),
+          }
+        : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/settings/signalmash/test-connection', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const diagnostic = await signalmashService.runConnectionDiagnostic();
+
+    await adminService.logAuditAction(
+      req.admin!.id,
+      'TEST_SIGNALMASH_CONNECTION',
+      'signalmash_connectivity',
+      undefined,
+      diagnostic as unknown as Record<string, unknown>,
+      {
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') || undefined,
+      }
+    );
+
+    res.json({
+      success: true,
+      data: diagnostic,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ===========================================
 // Dashboard Routes
 // ===========================================
@@ -248,6 +305,60 @@ router.get('/organizations', requireSuperAdmin, async (req: AdminRequest, res: R
     res.json({
       success: true,
       ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const linkExistingAssetsSchema = z.object({
+  organizationId: z.string().uuid(),
+  brandName: z.string().min(1).max(150),
+  signalmashBrandId: z.string().min(1).max(150),
+  tcrBrandId: z.string().max(150).optional().transform((value) => value?.trim() || undefined),
+  campaignName: z.string().min(1).max(150),
+  signalmashCampaignId: z.string().min(1).max(150),
+  tcrCampaignId: z.string().max(150).optional().transform((value) => value?.trim() || undefined),
+  phoneNumber: z.string().min(10).max(20),
+  signalmashNumberId: z.string().max(150).optional().transform((value) => value?.trim() || undefined),
+  friendlyName: z.string().max(100).optional().transform((value) => value?.trim() || undefined),
+  configureWebhook: z.boolean().optional(),
+  makeDefaultSender: z.boolean().optional(),
+});
+
+router.post('/organizations/link-existing-assets', requireSuperAdmin, async (req: AdminRequest, res: Response, next: NextFunction) => {
+  try {
+    const data = linkExistingAssetsSchema.parse(req.body);
+    const linked = await phoneNumberService.linkExistingAssets(data);
+
+    await adminService.logAuditAction(
+      req.admin!.id,
+      'LINK_EXISTING_SIGNALMASH_ASSETS',
+      'organization',
+      data.organizationId,
+      {
+        brandId: linked.brand.id,
+        campaignId: linked.campaign.id,
+        phoneNumberId: linked.phoneNumber.id,
+        signalmashBrandId: data.signalmashBrandId,
+        signalmashCampaignId: data.signalmashCampaignId,
+        signalmashNumberId: data.signalmashNumberId,
+        phoneNumber: data.phoneNumber,
+        webhookConfigured: linked.webhookConfigured,
+        webhookError: linked.webhookError,
+      },
+      {
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') || undefined,
+      }
+    );
+
+    res.status(201).json({
+      success: true,
+      data: linked,
+      message: linked.webhookError
+        ? 'Existing assets linked, but webhook configuration needs review'
+        : 'Existing Signalmash assets linked',
     });
   } catch (error) {
     next(error);

@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   MessageSquare,
   Search,
@@ -16,41 +16,103 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { api } from '@/lib/api';
-import { formatPhoneNumber } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { api, ApiError } from '@/lib/api';
+import { formatPhoneNumber, formatDateTime, normalizePhoneNumber } from '@/lib/utils';
+import { notify } from '@/stores/notification.store';
 
 interface Message {
   id: string;
   direction: 'inbound' | 'outbound';
+  type: 'sms' | 'mms';
   from: string;
   to: string;
   body: string;
-  status: 'queued' | 'sent' | 'delivered' | 'failed' | 'received';
-  campaignName: string | null;
-  platformName: string | null;
-  createdAt: string;
+  status: 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'undelivered' | 'received';
   errorMessage: string | null;
+  signalmashMessageId: string | null;
+  platformConnectionId: string | null;
+  campaignId: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+}
+
+interface SenderNumber {
+  id: string;
+  phoneNumber: string;
+  formattedNumber: string;
+  friendlyName: string | null;
+  status: 'active' | 'pending' | 'suspended' | 'released';
+  campaign: {
+    id: string;
+    name: string;
+    status: string;
+  } | null;
+}
+
+interface CampaignOption {
+  id: string;
+  name: string;
+  status: string;
 }
 
 const statusConfig = {
   queued: { label: 'Queued', icon: Clock, variant: 'secondary' as const },
+  sending: { label: 'Sending', icon: Send, variant: 'warning' as const },
   sent: { label: 'Sent', icon: Send, variant: 'warning' as const },
   delivered: { label: 'Delivered', icon: CheckCircle, variant: 'success' as const },
   failed: { label: 'Failed', icon: XCircle, variant: 'destructive' as const },
+  undelivered: { label: 'Undelivered', icon: XCircle, variant: 'destructive' as const },
   received: { label: 'Received', icon: ArrowDownLeft, variant: 'default' as const },
 };
 
+const getSendErrorMessage = (error: unknown) => {
+  if (!(error instanceof ApiError)) {
+    return 'The test message could not be sent.';
+  }
+
+  const validationErrors = error.details?.errors;
+  if (validationErrors && typeof validationErrors === 'object') {
+    const firstError = Object.entries(validationErrors as Record<string, unknown>)
+      .flatMap(([field, messages]) => {
+        if (!Array.isArray(messages)) return [];
+        return messages
+          .filter((message): message is string => typeof message === 'string')
+          .map((message) => `${field}: ${message}`);
+      })[0];
+
+    if (firstError) return firstError;
+  }
+
+  return error.message || 'The test message could not be sent.';
+};
+
 export function MessagesPage() {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [senderNumbers, setSenderNumbers] = useState<SenderNumber[]>([]);
+  const [campaignOptions, setCampaignOptions] = useState<CampaignOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [showComposeDialog, setShowComposeDialog] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [directionFilter, setDirectionFilter] = useState<string>('all');
-
-  useEffect(() => {
-    loadMessages();
-  }, []);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [directionFilter, setDirectionFilter] = useState('all');
+  const [composeForm, setComposeForm] = useState({
+    from: '',
+    to: '',
+    campaignId: '',
+    body: '',
+  });
 
   const loadMessages = async () => {
     try {
@@ -60,22 +122,90 @@ export function MessagesPage() {
       }
     } catch (error) {
       console.error('Failed to load messages:', error);
+      notify.error('Loading failed', 'The message log could not be loaded.');
+    }
+  };
+
+  const loadComposerOptions = async () => {
+    try {
+      const [numbersResponse, campaignsResponse] = await Promise.all([
+        api.getPhoneNumbers({ status: 'active', limit: 100 }),
+        api.getCampaigns({ status: 'approved' }),
+      ]);
+
+      if (numbersResponse.success && numbersResponse.data) {
+        setSenderNumbers(numbersResponse.data);
+      }
+
+      if (campaignsResponse.success && campaignsResponse.data) {
+        setCampaignOptions(campaignsResponse.data);
+      }
+    } catch (error) {
+      console.error('Failed to load message composer options:', error);
+      notify.error('Composer unavailable', 'Sender numbers or approved campaigns could not be loaded.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleRefresh = useCallback(async () => {
+  useEffect(() => {
+    const loadData = async () => {
+      await Promise.all([loadMessages(), loadComposerOptions()]);
+    };
+
+    loadData();
+  }, []);
+
+  const handleRefresh = async () => {
     setIsRefreshing(true);
     await loadMessages();
     setIsRefreshing(false);
-  }, []);
+  };
+
+  const openComposeDialog = () => {
+    const defaultNumber = senderNumbers[0];
+
+    setComposeForm({
+      from: defaultNumber?.phoneNumber || '',
+      to: '',
+      campaignId: defaultNumber?.campaign?.status === 'approved' ? defaultNumber.campaign.id : '',
+      body: '',
+    });
+    setShowComposeDialog(true);
+  };
+
+  const handleSendMessage = async () => {
+    setIsSending(true);
+
+    try {
+      const response = await api.sendMessage({
+        from: normalizePhoneNumber(composeForm.from),
+        to: normalizePhoneNumber(composeForm.to),
+        body: composeForm.body,
+        campaignId: composeForm.campaignId || undefined,
+      });
+
+      if (response.success && response.data) {
+        setMessages((current) => [response.data, ...current]);
+        setShowComposeDialog(false);
+        notify.success('Message queued', 'The outbound message was accepted and added to the log.');
+        await loadMessages();
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      notify.error('Send failed', getSendErrorMessage(error));
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   const filteredMessages = messages.filter((message) => {
+    const query = searchQuery.toLowerCase();
     const matchesSearch =
-      message.body.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      message.body.toLowerCase().includes(query) ||
       message.from.includes(searchQuery) ||
-      message.to.includes(searchQuery);
+      message.to.includes(searchQuery) ||
+      (message.signalmashMessageId || '').toLowerCase().includes(query);
 
     const matchesStatus = statusFilter === 'all' || message.status === statusFilter;
     const matchesDirection = directionFilter === 'all' || message.direction === directionFilter;
@@ -83,176 +213,364 @@ export function MessagesPage() {
     return matchesSearch && matchesStatus && matchesDirection;
   });
 
+  const summary = {
+    total: messages.length,
+    delivered: messages.filter((message) => message.status === 'delivered').length,
+    failed: messages.filter((message) => message.status === 'failed' || message.status === 'undelivered').length,
+    inbound: messages.filter((message) => message.direction === 'inbound').length,
+  };
+
+  const hasActiveSenders = senderNumbers.length > 0;
+  const hasApprovedCampaigns = campaignOptions.length > 0;
+  const hasCampaignAssignedSender = senderNumbers.some((number) => number.campaign?.status === 'approved');
+  const canRunTestSend = hasActiveSenders && (hasApprovedCampaigns || hasCampaignAssignedSender);
+
   return (
     <div>
       <Header
         title="Messages"
-        subtitle="View and track all SMS messages"
+        subtitle="Track message flow, delivery state, and webhook-driven status updates."
+        action={{
+          label: 'Send Test Message',
+          onClick: openComposeDialog,
+        }}
       />
 
-      <div className="p-6 space-y-6">
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Input
-              placeholder="Search messages, phone numbers..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              leftIcon={<Search className="h-4 w-4" />}
-            />
+      <div className="space-y-6 p-4 sm:p-6">
+        <section className="rounded-[28px] border border-slate-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-2xl space-y-2">
+              <Badge variant="outline" className="w-fit border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+                Message Log
+              </Badge>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
+                Delivery visibility without invented metadata
+              </h2>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-400">
+                This screen now reflects the raw backend message records: direction, status,
+                message identifiers, and send or delivery timestamps.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Total</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.total}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Delivered</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.delivered}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Failed</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.failed}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Inbound</p>
+                <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-slate-50">{summary.inbound}</p>
+              </div>
+            </div>
           </div>
+        </section>
 
-          <select
-            value={directionFilter}
-            onChange={(e) => setDirectionFilter(e.target.value)}
-            className="h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          >
-            <option value="all">All Directions</option>
-            <option value="outbound">Outbound</option>
-            <option value="inbound">Inbound</option>
-          </select>
+        {!canRunTestSend && (
+          <Card className="border-amber-200 bg-amber-50 shadow-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+            <CardContent className="flex flex-col gap-4 p-6 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-2">
+                <Badge variant="warning" className="w-fit">Embedded Test Send Blocked</Badge>
+                <h3 className="text-lg font-semibold text-amber-950 dark:text-amber-100">
+                  Complete sender and campaign setup before sending test traffic
+                </h3>
+                <p className="max-w-2xl text-sm leading-6 text-amber-900/80 dark:text-amber-100/80">
+                  {!hasActiveSenders
+                    ? 'There are no active sender numbers yet. Finish number purchase or assignment first.'
+                    : 'There is no approved campaign available for the embedded test-send flow yet. Finish campaign approval or assign a number to an approved campaign first.'}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                {!hasApprovedCampaigns && (
+                  <Button variant="outline" onClick={() => navigate('/campaigns')}>
+                    Review Campaigns
+                  </Button>
+                )}
+                <Button onClick={() => navigate(hasActiveSenders ? '/campaigns' : '/phone-numbers')}>
+                  {hasActiveSenders ? 'Fix Campaign Setup' : 'Manage Numbers'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="h-11 px-4 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          >
-            <option value="all">All Statuses</option>
-            <option value="delivered">Delivered</option>
-            <option value="sent">Sent</option>
-            <option value="queued">Queued</option>
-            <option value="failed">Failed</option>
-            <option value="received">Received</option>
-          </select>
+        <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="w-full max-w-md">
+              <Input
+                placeholder="Search by body, phone number, or message ID"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                leftIcon={<Search className="h-4 w-4" />}
+                className="border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900"
+              />
+            </div>
 
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={handleRefresh}
-            disabled={isRefreshing}
-          >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={openComposeDialog}
+                leftIcon={<Send className="h-4 w-4" />}
+                disabled={!canRunTestSend}
+              >
+                Send Test Message
+              </Button>
 
-        {/* Messages List */}
+              <select
+                value={directionFilter}
+                onChange={(e) => setDirectionFilter(e.target.value)}
+                className="h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-950 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+              >
+                <option value="all">All Directions</option>
+                <option value="outbound">Outbound</option>
+                <option value="inbound">Inbound</option>
+              </select>
+
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-950 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+              >
+                <option value="all">All Statuses</option>
+                <option value="queued">Queued</option>
+                <option value="sending">Sending</option>
+                <option value="sent">Sent</option>
+                <option value="delivered">Delivered</option>
+                <option value="failed">Failed</option>
+                <option value="undelivered">Undelivered</option>
+                <option value="received">Received</option>
+              </select>
+
+              <Button variant="outline" size="icon" onClick={handleRefresh} disabled={isRefreshing}>
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
+          </div>
+        </section>
+
         {isLoading ? (
           <div className="space-y-3">
-            {[...Array(10)].map((_, i) => (
-              <Card key={i} variant="glass">
+            {[...Array(8)].map((_, i) => (
+              <Card key={i} className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardContent className="p-4">
-                  <div className="animate-pulse flex items-center gap-4">
-                    <div className="w-10 h-10 bg-muted rounded-xl" />
+                  <div className="flex animate-pulse items-center gap-4">
+                    <div className="h-10 w-10 rounded-xl bg-slate-200 dark:bg-slate-800" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-muted rounded w-1/4" />
-                      <div className="h-3 bg-muted rounded w-3/4" />
+                      <div className="h-4 w-1/4 rounded bg-slate-200 dark:bg-slate-800" />
+                      <div className="h-3 w-3/4 rounded bg-slate-200 dark:bg-slate-800" />
                     </div>
-                    <div className="h-6 bg-muted rounded w-20" />
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
         ) : filteredMessages.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center py-16"
-          >
-            <div className="inline-flex p-4 rounded-2xl bg-blue-100 dark:bg-blue-900/30 mb-4">
-              <MessageSquare className="h-8 w-8 text-blue-600" />
-            </div>
-            <h3 className="text-lg font-semibold mb-2">No messages found</h3>
-            <p className="text-muted-foreground max-w-md mx-auto">
-              {searchQuery || statusFilter !== 'all' || directionFilter !== 'all'
-                ? 'Try adjusting your filters to see more messages.'
-                : 'Messages will appear here once you start sending or receiving SMS.'}
-            </p>
-          </motion.div>
+          <Card className="border-dashed border-slate-300 bg-slate-50/80 shadow-none dark:border-slate-700 dark:bg-slate-900/60">
+            <CardContent className="p-10 text-center">
+              <div className="mx-auto mb-4 inline-flex rounded-2xl border border-slate-200 bg-white p-4 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                <MessageSquare className="h-8 w-8" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-950 dark:text-slate-50">No messages found</h3>
+              <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-slate-400">
+                {searchQuery || statusFilter !== 'all' || directionFilter !== 'all'
+                  ? 'Adjust your filters to review a broader set of messages.'
+                  : canRunTestSend
+                    ? 'Messages will appear here once your organization starts sending or receiving traffic.'
+                    : 'Finish sender and campaign readiness first, then use the embedded test-send flow to generate initial traffic.'}
+              </p>
+            </CardContent>
+          </Card>
         ) : (
           <div className="space-y-3">
-            {filteredMessages.map((message, index) => {
+            {filteredMessages.map((message) => {
               const status = statusConfig[message.status];
               const StatusIcon = status.icon;
               const isOutbound = message.direction === 'outbound';
 
               return (
-                <motion.div
-                  key={message.id}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.02 }}
-                >
-                  <Card variant="glass" className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-4">
+                <Card key={message.id} className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                  <CardContent className="p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                       <div className="flex items-start gap-4">
-                        {/* Direction Icon */}
-                        <div className={`p-2.5 rounded-xl ${
-                          isOutbound
-                            ? 'bg-blue-100 dark:bg-blue-900/30'
-                            : 'bg-green-100 dark:bg-green-900/30'
-                        }`}>
+                        <div className={`rounded-2xl p-3 ${isOutbound ? 'bg-sky-100 dark:bg-sky-500/15' : 'bg-emerald-100 dark:bg-emerald-500/15'}`}>
                           {isOutbound ? (
-                            <ArrowUpRight className="h-4 w-4 text-blue-600" />
+                            <ArrowUpRight className="h-4 w-4 text-sky-700 dark:text-sky-300" />
                           ) : (
-                            <ArrowDownLeft className="h-4 w-4 text-green-600" />
+                            <ArrowDownLeft className="h-4 w-4 text-emerald-700 dark:text-emerald-300" />
                           )}
                         </div>
-
-                        {/* Message Content */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-medium text-sm">
-                              {isOutbound ? 'To: ' : 'From: '}
-                              {formatPhoneNumber(isOutbound ? message.to : message.from)}
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-slate-950 dark:text-slate-50">
+                              {isOutbound ? 'To' : 'From'} {formatPhoneNumber(isOutbound ? message.to : message.from)}
                             </span>
-                            {message.campaignName && (
-                              <Badge variant="outline" className="text-xs">
-                                {message.campaignName}
-                              </Badge>
-                            )}
-                            {message.platformName && (
-                              <Badge variant="outline" className="text-xs">
-                                {message.platformName}
-                              </Badge>
-                            )}
+                            <Badge variant="outline">{message.type.toUpperCase()}</Badge>
+                            <Badge variant={status.variant} className="gap-1">
+                              <StatusIcon className="h-3 w-3" />
+                              {status.label}
+                            </Badge>
                           </div>
-                          <p className="text-sm text-muted-foreground line-clamp-2">
+                          <p className="max-w-3xl text-sm leading-6 text-slate-700 dark:text-slate-300">
                             {message.body}
                           </p>
-                          {message.status === 'failed' && message.errorMessage && (
-                            <p className="text-xs text-destructive mt-1">
+                          {message.errorMessage && (
+                            <p className="text-sm text-red-600 dark:text-red-300">
                               Error: {message.errorMessage}
                             </p>
                           )}
                         </div>
+                      </div>
 
-                        {/* Status & Time */}
-                        <div className="text-right flex-shrink-0">
-                          <Badge variant={status.variant} className="gap-1 mb-1">
-                            <StatusIcon className="h-3 w-3" />
-                            {status.label}
-                          </Badge>
-                          <p className="text-xs text-muted-foreground">
-                            {new Date(message.createdAt).toLocaleString()}
-                          </p>
+                      <div className="grid gap-2 text-sm text-slate-600 dark:text-slate-400 lg:min-w-[280px]">
+                        <div className="flex justify-between gap-3">
+                          <span>Created</span>
+                          <span className="font-medium text-slate-950 dark:text-slate-50">{formatDateTime(message.createdAt)}</span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span>Sent</span>
+                          <span className="font-medium text-slate-950 dark:text-slate-50">
+                            {message.sentAt ? formatDateTime(message.sentAt) : 'Not sent'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span>Delivered</span>
+                          <span className="font-medium text-slate-950 dark:text-slate-50">
+                            {message.deliveredAt ? formatDateTime(message.deliveredAt) : 'Not delivered'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span>Campaign ID</span>
+                          <span className="max-w-[150px] truncate font-medium text-slate-950 dark:text-slate-50">
+                            {message.campaignId || 'None'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span>Message ID</span>
+                          <span className="max-w-[150px] truncate font-medium text-slate-950 dark:text-slate-50">
+                            {message.signalmashMessageId || message.id}
+                          </span>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
+                    </div>
+                  </CardContent>
+                </Card>
               );
             })}
           </div>
         )}
-
-        {/* Pagination hint */}
-        {filteredMessages.length >= 50 && (
-          <div className="text-center">
-            <Button variant="outline">Load More</Button>
-          </div>
-        )}
       </div>
+
+      <Dialog open={showComposeDialog} onOpenChange={setShowComposeDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Send Test Message</DialogTitle>
+            <DialogDescription>
+              Send an outbound SMS using an active owned number and, if needed, an approved campaign.
+            </DialogDescription>
+          </DialogHeader>
+
+          {senderNumbers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+              No active phone numbers are available yet. Purchase and activate a number before sending test traffic.
+            </div>
+          ) : (
+            <div className="grid gap-5">
+              <div className="grid gap-5 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">From Number</label>
+                  <select
+                    value={composeForm.from}
+                    onChange={(e) => {
+                      const nextFrom = e.target.value;
+                      const selectedNumber = senderNumbers.find((number) => number.phoneNumber === nextFrom);
+
+                      setComposeForm((current) => ({
+                        ...current,
+                        from: nextFrom,
+                        campaignId: selectedNumber?.campaign?.status === 'approved'
+                          ? selectedNumber.campaign.id
+                          : current.campaignId,
+                      }));
+                    }}
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-950 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+                  >
+                    {senderNumbers.map((number) => (
+                      <option key={number.id} value={number.phoneNumber}>
+                        {number.friendlyName ? `${number.friendlyName} • ` : ''}{number.formattedNumber}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">To Number</label>
+                  <Input
+                    value={composeForm.to}
+                    onChange={(e) => setComposeForm((current) => ({ ...current, to: e.target.value }))}
+                    onBlur={() => setComposeForm((current) => ({ ...current, to: normalizePhoneNumber(current.to) }))}
+                    placeholder="+15551234567"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Campaign</label>
+                <select
+                  value={composeForm.campaignId}
+                  onChange={(e) => setComposeForm((current) => ({ ...current, campaignId: e.target.value }))}
+                  className="h-11 w-full rounded-xl border border-slate-300 bg-white px-4 text-sm text-slate-950 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+                >
+                  <option value="">No campaign</option>
+                  {campaignOptions.map((campaign) => (
+                    <option key={campaign.id} value={campaign.id}>
+                      {campaign.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  Only approved campaigns are offered here because the backend rejects non-approved campaign traffic.
+                </p>
+              </div>
+
+              {!hasApprovedCampaigns && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                  No approved campaigns are available yet. Return to the campaign flow, complete approval, and then retry the embedded test send.
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Message Body</label>
+                <textarea
+                  value={composeForm.body}
+                  onChange={(e) => setComposeForm((current) => ({ ...current, body: e.target.value }))}
+                  className="min-h-[140px] w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
+                  placeholder="Write the outbound SMS content you want to test."
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowComposeDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSendMessage}
+              isLoading={isSending}
+              disabled={!canRunTestSend || !composeForm.from || !composeForm.to || !composeForm.body.trim()}
+            >
+              Send Message
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

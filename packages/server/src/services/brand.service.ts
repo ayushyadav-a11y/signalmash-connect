@@ -4,17 +4,24 @@
 
 import { prisma } from '../config/database.js';
 import { signalmashService } from './signalmash.service.js';
-import { NotFoundError, BadRequestError, ConflictError } from '../utils/errors.js';
+import { NotFoundError, BadRequestError, ConflictError, AppError, ExternalServiceError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
-import type { Brand, BrandStatus, EntityType, BusinessVertical } from '@prisma/client';
+import type { Brand, BrandStatus, EntityType, BusinessVertical, BrandRelationship } from '@prisma/client';
+import { integrationService } from './integration.service.js';
 
 interface CreateBrandInput {
   organizationId: string;
   legalName: string;
   displayName: string;
+  firstName?: string;
+  lastName?: string;
   ein?: string;
+  einIssuingCountry?: string;
   entityType: EntityType;
+  providerEntityType?: string;
   vertical: BusinessVertical;
+  providerVertical?: string;
+  brandRelationship?: BrandRelationship;
   streetAddress: string;
   city: string;
   state: string;
@@ -22,15 +29,30 @@ interface CreateBrandInput {
   country?: string;
   website: string;
   phone: string;
+  mobilePhone?: string;
   email: string;
+  businessContactEmail?: string;
+  stockSymbol?: string;
+  stockExchange?: string;
+  ipAddress?: string;
+  altBusinessId?: string;
+  altBusinessIdType?: string;
+  referenceId?: string;
+  tags?: string[];
 }
 
 interface UpdateBrandInput {
   legalName?: string;
   displayName?: string;
+  firstName?: string;
+  lastName?: string;
   ein?: string;
+  einIssuingCountry?: string;
   entityType?: EntityType;
+  providerEntityType?: string;
   vertical?: BusinessVertical;
+  providerVertical?: string;
+  brandRelationship?: BrandRelationship;
   streetAddress?: string;
   city?: string;
   state?: string;
@@ -38,7 +60,16 @@ interface UpdateBrandInput {
   country?: string;
   website?: string;
   phone?: string;
+  mobilePhone?: string;
   email?: string;
+  businessContactEmail?: string;
+  stockSymbol?: string;
+  stockExchange?: string;
+  ipAddress?: string;
+  altBusinessId?: string;
+  altBusinessIdType?: string;
+  referenceId?: string;
+  tags?: string[];
 }
 
 export class BrandService {
@@ -62,6 +93,9 @@ export class BrandService {
       data: {
         ...data,
         country: data.country ?? 'US',
+        providerEntityType: data.providerEntityType ?? null,
+        providerVertical: data.providerVertical ?? null,
+        tags: data.tags ?? [],
         status: 'draft',
       },
     });
@@ -127,54 +161,10 @@ export class BrandService {
   /**
    * Submit brand for verification
    */
-  async submitForVerification(id: string, organizationId: string): Promise<Brand> {
-    const brand = await this.getById(id, organizationId);
-
-    if (brand.status !== 'draft' && brand.status !== 'unverified' && brand.status !== 'rejected') {
-      throw new BadRequestError('Brand is not in a submittable status');
-    }
-
-    // Validate required fields
-    if (!brand.ein && brand.entityType !== 'sole_proprietor') {
-      throw new BadRequestError('EIN is required for non-sole proprietor entities');
-    }
-
-    try {
-      // Submit to Signalmash
-      const signalmashResult = await signalmashService.registerBrand({
-        legalName: brand.legalName,
-        displayName: brand.displayName,
-        ein: brand.ein ?? undefined,
-        entityType: brand.entityType,
-        vertical: brand.vertical,
-        streetAddress: brand.streetAddress,
-        city: brand.city,
-        state: brand.state,
-        postalCode: brand.postalCode,
-        country: brand.country,
-        website: brand.website,
-        phone: brand.phone,
-        email: brand.email,
-      });
-
-      // Update brand with Signalmash IDs
-      const updatedBrand = await prisma.brand.update({
-        where: { id },
-        data: {
-          signalmashBrandId: signalmashResult.brandId,
-          tcrBrandId: signalmashResult.tcrBrandId,
-          status: 'pending_verification',
-          verificationScore: signalmashResult.verificationScore,
-        },
-      });
-
-      logger.info({ brandId: id, signalmashBrandId: signalmashResult.brandId }, 'Brand submitted for verification');
-
-      return updatedBrand;
-    } catch (error) {
-      logger.error({ brandId: id, error }, 'Failed to submit brand for verification');
-      throw error;
-    }
+  async submitForVerification(_id: string, _organizationId: string): Promise<Brand> {
+    throw new BadRequestError(
+      'In-app brand registration is disabled. Link an existing Signalmash brand from Phone Numbers instead.'
+    );
   }
 
   /**
@@ -184,7 +174,8 @@ export class BrandService {
     signalmashBrandId: string,
     status: 'verified' | 'unverified' | 'rejected',
     verificationScore?: number,
-    rejectionReason?: string
+    rejectionReason?: string,
+    tcrBrandId?: string
   ): Promise<Brand> {
     const brand = await prisma.brand.findFirst({
       where: { signalmashBrandId },
@@ -200,6 +191,7 @@ export class BrandService {
         status,
         verificationScore,
         rejectionReason,
+        tcrBrandId: tcrBrandId ?? brand.tcrBrandId,
       },
     });
 
@@ -208,7 +200,88 @@ export class BrandService {
       'Brand verification status updated'
     );
 
+    await integrationService.syncBrandMapping(updatedBrand);
+
     return updatedBrand;
+  }
+
+  async refreshVerificationStatus(id: string, organizationId: string): Promise<Brand> {
+    const brand = await this.getById(id, organizationId);
+
+    if (!brand.signalmashBrandId) {
+      throw new BadRequestError('Brand has not been submitted to Signalmash yet');
+    }
+
+    try {
+      const providerStatus = await signalmashService.getBrandStatus(brand.signalmashBrandId);
+      const nextStatus = this.mapProviderBrandStatus(providerStatus.status, brand.status);
+
+      const updatedBrand = await prisma.brand.update({
+        where: { id: brand.id },
+        data: {
+          status: nextStatus,
+          verificationScore: providerStatus.verificationScore ?? brand.verificationScore,
+          rejectionReason: providerStatus.rejectionReason ?? (nextStatus === 'rejected' ? brand.rejectionReason : null),
+          tcrBrandId: providerStatus.tcrBrandId ?? brand.tcrBrandId,
+          referenceId: providerStatus.referenceId ?? brand.referenceId,
+        },
+      });
+
+      logger.info(
+        {
+          brandId: brand.id,
+          signalmashBrandId: brand.signalmashBrandId,
+          providerStatus: providerStatus.status,
+          nextStatus,
+          tcrBrandId: updatedBrand.tcrBrandId,
+        },
+        'Brand verification status refreshed from Signalmash'
+      );
+
+      await integrationService.syncBrandMapping(updatedBrand);
+
+      return updatedBrand;
+    } catch (error) {
+      if (error instanceof ExternalServiceError) {
+        throw new AppError(
+          'Unable to refresh brand status from Signalmash right now.',
+          'PROVIDER_STATUS_REFRESH_FAILED',
+          503,
+          true,
+          {
+            provider: 'signalmash',
+            operation: 'refresh_brand_status',
+            brandId: brand.id,
+            signalmashBrandId: brand.signalmashBrandId,
+            upstreamMessage: error.message,
+          }
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  private mapProviderBrandStatus(providerStatus: string, currentStatus: BrandStatus): BrandStatus {
+    const normalized = providerStatus.trim().toLowerCase();
+
+    if (['active', 'verified', 'approved'].includes(normalized)) {
+      return 'verified';
+    }
+
+    if (['rejected', 'declined', 'failed'].includes(normalized)) {
+      return 'rejected';
+    }
+
+    if (['unverified', 'needs_info'].includes(normalized)) {
+      return 'unverified';
+    }
+
+    if (['pending', 'pending_verification', 'in_review', 'submitted', 'review'].includes(normalized)) {
+      return 'pending_verification';
+    }
+
+    return currentStatus;
   }
 
   /**

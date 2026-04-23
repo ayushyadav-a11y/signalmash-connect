@@ -12,6 +12,28 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 
 const router: RouterType = Router();
 
+const providerEntityTypeToInternal = {
+  PRIVATE_PROFIT: 'corporation',
+  PUBLIC_PROFIT: 'corporation',
+  NON_PROFIT: 'non_profit',
+  GOVERNMENT: 'government',
+  SOLE_PROPRIETOR: 'sole_proprietor',
+  PARTNERSHIP: 'partnership',
+  LLC: 'llc',
+} as const;
+
+const providerVerticalToInternal = {
+  RETAIL: 'retail',
+  HEALTHCARE: 'healthcare',
+  FINANCIAL: 'financial',
+  EDUCATION: 'education',
+  HOSPITALITY: 'hospitality',
+  REAL_ESTATE: 'real_estate',
+  TECHNOLOGY: 'technology',
+  PROFESSIONAL_SERVICES: 'professional_services',
+  OTHER: 'other',
+} as const;
+
 // Validation schemas
 const createBrandSchema = z.object({
   legalName: z.string().min(1, 'Legal name is required').max(100),
@@ -46,7 +68,94 @@ const createBrandSchema = z.object({
   email: emailSchema,
 });
 
-const updateBrandSchema = createBrandSchema.partial();
+const updateBrandSchema = createBrandSchema.extend({
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  einIssuingCountry: z.string().min(2).max(2).optional(),
+  providerEntityType: z.enum(['PRIVATE_PROFIT', 'PUBLIC_PROFIT', 'NON_PROFIT', 'GOVERNMENT', 'SOLE_PROPRIETOR', 'PARTNERSHIP', 'LLC']).optional(),
+  providerVertical: z.enum(['RETAIL', 'HEALTHCARE', 'FINANCIAL', 'EDUCATION', 'HOSPITALITY', 'REAL_ESTATE', 'TECHNOLOGY', 'PROFESSIONAL_SERVICES', 'OTHER']).optional(),
+  brandRelationship: z.enum(['BASIC_ACCOUNT', 'SMALL_ACCOUNT', 'MEDIUM_ACCOUNT', 'LARGE_ACCOUNT', 'KEY_ACCOUNT']).optional(),
+  mobilePhone: z.string().optional(),
+  businessContactEmail: emailSchema.optional(),
+  stockSymbol: z.string().optional(),
+  stockExchange: z.string().optional(),
+  ipAddress: z.string().optional(),
+  altBusinessId: z.string().optional(),
+  altBusinessIdType: z.string().optional(),
+  referenceId: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+}).partial();
+
+const createBrandProviderSchema = z.object({
+  entityType: z.enum(['PRIVATE_PROFIT', 'PUBLIC_PROFIT', 'NON_PROFIT', 'GOVERNMENT', 'SOLE_PROPRIETOR', 'PARTNERSHIP', 'LLC']),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  displayName: z.string().min(1, 'Display name is required').max(100),
+  companyName: z.string().min(1, 'Company name is required').max(150),
+  ein: z.string().optional(),
+  einIssuingCountry: z.string().min(2).max(2).default('US'),
+  phone: z.string().min(7, 'Phone is required').max(20),
+  street: z.string().min(1, 'Street is required').max(200),
+  city: z.string().min(1, 'City is required').max(100),
+  state: z.string().min(2, 'State is required').max(100),
+  postalCode: z.string().min(1, 'Postal code is required').max(20),
+  country: z.string().min(2).max(2).default('US'),
+  email: emailSchema,
+  stockSymbol: z.string().optional().default('NONE'),
+  stockExchange: z.string().optional().default('NONE'),
+  ipAddress: z.string().optional().default(''),
+  brandRelationship: z.enum(['BASIC_ACCOUNT', 'SMALL_ACCOUNT', 'MEDIUM_ACCOUNT', 'LARGE_ACCOUNT', 'KEY_ACCOUNT']).default('BASIC_ACCOUNT'),
+  website: urlSchema,
+  vertical: z.enum(['RETAIL', 'HEALTHCARE', 'FINANCIAL', 'EDUCATION', 'HOSPITALITY', 'REAL_ESTATE', 'TECHNOLOGY', 'PROFESSIONAL_SERVICES', 'OTHER']),
+  altBusinessId: z.string().optional().default('NONE'),
+  altBusinessIdType: z.string().optional().default('NONE'),
+  referenceId: z.string().optional().default('NONE'),
+  tag: z.array(z.string()).optional().default([]),
+  mobilePhone: z.string().optional().default('NONE'),
+  businessContactEmail: emailSchema,
+});
+
+const createBrandRequestSchema = z.union([createBrandSchema, createBrandProviderSchema]);
+
+function normalizeCreateBrandPayload(body: unknown) {
+  const providerParsed = createBrandProviderSchema.safeParse(body);
+  if (providerParsed.success) {
+    const data = providerParsed.data;
+
+    return {
+      legalName: data.companyName,
+      displayName: data.displayName,
+      firstName: data.firstName?.trim() || undefined,
+      lastName: data.lastName?.trim() || undefined,
+      ein: data.ein?.trim() || undefined,
+      einIssuingCountry: data.einIssuingCountry,
+      entityType: providerEntityTypeToInternal[data.entityType],
+      providerEntityType: data.entityType,
+      vertical: providerVerticalToInternal[data.vertical],
+      providerVertical: data.vertical,
+      brandRelationship: data.brandRelationship,
+      streetAddress: data.street,
+      city: data.city,
+      state: data.state.trim().toUpperCase(),
+      postalCode: data.postalCode,
+      country: data.country,
+      website: data.website,
+      phone: data.phone,
+      mobilePhone: data.mobilePhone === 'NONE' ? undefined : data.mobilePhone,
+      email: data.email,
+      businessContactEmail: data.businessContactEmail,
+      stockSymbol: data.stockSymbol === 'NONE' ? undefined : data.stockSymbol,
+      stockExchange: data.stockExchange === 'NONE' ? undefined : data.stockExchange,
+      ipAddress: data.ipAddress || undefined,
+      altBusinessId: data.altBusinessId === 'NONE' ? undefined : data.altBusinessId,
+      altBusinessIdType: data.altBusinessIdType === 'NONE' ? undefined : data.altBusinessIdType,
+      referenceId: data.referenceId === 'NONE' ? undefined : data.referenceId,
+      tags: data.tag,
+    };
+  }
+
+  return createBrandSchema.parse(body);
+}
 
 /**
  * GET /brands
@@ -72,10 +181,10 @@ router.get(
 router.post(
   '/',
   authenticate,
-  validate({ body: createBrandSchema }),
+  validate({ body: createBrandRequestSchema }),
   asyncHandler(async (req, res) => {
     const brand = await brandService.create({
-      ...req.body,
+      ...normalizeCreateBrandPayload(req.body),
       organizationId: req.user!.organizationId,
     });
 
@@ -147,6 +256,28 @@ router.post(
       success: true,
       data: brand,
       message: 'Brand submitted for verification',
+    });
+  })
+);
+
+/**
+ * POST /brands/:id/refresh-status
+ * Refresh brand verification status from Signalmash
+ */
+router.post(
+  '/:id/refresh-status',
+  authenticate,
+  validate({ params: idParamSchema }),
+  asyncHandler(async (req, res) => {
+    const brand = await brandService.refreshVerificationStatus(
+      req.params.id,
+      req.user!.organizationId
+    );
+
+    res.json({
+      success: true,
+      data: brand,
+      message: 'Brand status refreshed',
     });
   })
 );
